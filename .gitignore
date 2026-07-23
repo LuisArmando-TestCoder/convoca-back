@@ -1,0 +1,17 @@
+# Env & secrets
+.env
+.env.local
+service-account.json
+
+
+# Deno KV local database
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
