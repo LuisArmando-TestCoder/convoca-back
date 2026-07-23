@@ -24,7 +24,16 @@ interface SendArgs {
 
 const transporters = new Map<string, ReturnType<typeof nodemailer.createTransport>>();
 
-function transporterFor(user: string, pass: string) {
+/**
+ * Gmail shows App Passwords as four space-separated groups ("vcxh qbma lkdm
+ * amjb"), but the actual secret is the 16 chars with no spaces. Users paste it
+ * verbatim, so strip all whitespace at the single point where it reaches SMTP —
+ * making every caller and any previously stored value safe.
+ */
+const normalizePass = (pass: string) => pass.replace(/\s+/g, "");
+
+function transporterFor(user: string, rawPass: string) {
+  const pass = normalizePass(rawPass);
   const key = `${user}:${pass}`;
   let t = transporters.get(key);
   if (!t) {
@@ -40,10 +49,11 @@ export async function verifyGmail(user: string, pass: string): Promise<boolean> 
     await transporterFor(user, pass).verify();
     return true;
   } catch {
-    transporters.delete(`${user}:${pass}`);
+    transporters.delete(`${user}:${normalizePass(pass)}`);
     return false;
   }
 }
+
 
 export async function sendEmail({ org, to, subject, html, attachments }: SendArgs): Promise<void> {
   const t = transporterFor(org.gmailUser, org.gmailPass);
