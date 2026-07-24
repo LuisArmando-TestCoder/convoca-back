@@ -23,7 +23,8 @@ import {
 } from "../db/participants.ts";
 import { createLink, getLink, listLinks, setLinkActive } from "../db/links.ts";
 import { registerParticipant, resendQr } from "../services/registerParticipant.ts";
-import type { EventDoc, EventMode, Participant } from "../types.ts";
+import type { EventDoc, EventField, EventMode, Participant } from "../types.ts";
+
 
 const events = new Hono<AppEnv>();
 events.use("*", requireAuth);
@@ -39,6 +40,40 @@ function parseQuota(v: unknown): number | null {
   const n = Number(v);
   return Number.isInteger(n) && n > 0 ? n : null;
 }
+
+const slugify = (s: string) =>
+  s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "field";
+
+/** Parse the team-defined field schema off an event create/patch body. */
+function parseEventFields(raw: unknown): EventField[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: EventField[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    const label = requireString(rec.label, "field label", 60);
+    let key = typeof rec.key === "string" && rec.key ? slugify(rec.key) : slugify(label);
+    while (seen.has(key)) key += "_";
+    seen.add(key);
+    out.push({ key, label, required: Boolean(rec.required) });
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+/** Validate + collect a participant's custom field values against an event's schema. */
+function pickParticipantFields(ev: EventDoc, raw: unknown): Record<string, string> {
+  const src = (raw && typeof raw === "object") ? raw as Record<string, unknown> : {};
+  const out: Record<string, string> = {};
+  for (const f of ev.fields ?? []) {
+    const v = typeof src[f.key] === "string" ? (src[f.key] as string).trim().slice(0, 300) : "";
+    if (v) out[f.key] = v;
+    else if (f.required) fail(400, `${f.label} is required.`);
+  }
+  return out;
+}
+
 
 /** Loads the :id event for the current org or throws 404. */
 async function loadEvent(c: Context<AppEnv>): Promise<EventDoc> {
@@ -67,10 +102,12 @@ events.post("/", async (c) => {
     mode: parseMode(body.mode),
     date: optionalString(body.date, 40),
     quota: parseQuota(body.quota),
+    fields: parseEventFields(body.fields),
     clonedFrom: null,
     createdAt: new Date().toISOString(),
   };
   await createEvent(ev);
+
   return c.json({ event: ev }, 201);
 });
 
@@ -87,8 +124,10 @@ events.patch("/:id", async (c) => {
     mode: body.mode != null ? parseMode(body.mode) : ev.mode,
     date: body.date != null ? optionalString(body.date, 40) : ev.date,
     quota: body.quota !== undefined ? parseQuota(body.quota) : ev.quota,
+    fields: body.fields !== undefined ? parseEventFields(body.fields) : (ev.fields ?? []),
   };
   await updateEvent(updated);
+
   return c.json({ event: updated });
 });
 
@@ -119,12 +158,16 @@ events.get("/:id/stats", async (c) => {
   const ev = await loadEvent(c);
   const list = await listParticipants(ev.orgId, ev.id);
   const registered = list.filter((p) => p.registered);
+  // "By country" is a best-effort breakdown: prefer a `country` custom field,
+  // fall back to the legacy built-in column on pre-existing participants.
   const byCountry: Record<string, number> = {};
   const bySource: Record<string, number> = { manual: 0, csv: 0, self: 0 };
   for (const p of list) {
-    byCountry[p.country || "—"] = (byCountry[p.country || "—"] ?? 0) + 1;
+    const country = (p.fields?.country ?? p.country ?? "").trim();
+    if (country) byCountry[country] = (byCountry[country] ?? 0) + 1;
     bySource[p.source] = (bySource[p.source] ?? 0) + 1;
   }
+
   return c.json({
     total: list.length,
     checkedIn: registered.length,
@@ -162,13 +205,13 @@ events.post("/:id/participants", async (c) => {
   const outcome = await registerParticipant(org, ev, {
     name: requireString(body.name, "name", 160),
     email: requireEmail(body.email),
-    country: requireString(body.country, "country", 80),
-    phone: requireString(body.phone, "phone", 40),
+    fields: pickParticipantFields(ev, body.fields),
     source: "manual",
     createdBy,
   });
   return c.json(outcome, outcome.created ? 201 : 200);
 });
+
 
 events.post("/:id/participants/csv", async (c) => {
   const ev = await loadEvent(c);
@@ -188,20 +231,18 @@ events.post("/:id/participants/csv", async (c) => {
   for (const [i, row] of rows.entries()) {
     const name = String(row.name ?? "").trim();
     const email = String(row.email ?? "").trim().toLowerCase();
-    const country = String(row.country ?? "").trim();
-    const phone = String(row.phone ?? "").trim();
-    if (!name || !email || !country || !phone) {
-      results.errors.push(`Row ${i + 1}: missing required field.`);
+    if (!name || !email) {
+      results.errors.push(`Row ${i + 1}: name and email are required.`);
       continue;
     }
     try {
+      // Custom field values arrive keyed by field.key (mapped client-side).
       // Imported participants are created PENDING (no email); a collaborator
       // sends each QR manually from the dashboard when ready.
       const out = await registerParticipant(org, ev, {
         name,
         email,
-        country,
-        phone,
+        fields: pickParticipantFields(ev, row),
         source: "csv",
         createdBy,
       }, { sendInvite: false });
@@ -214,6 +255,7 @@ events.post("/:id/participants/csv", async (c) => {
   }
   return c.json(results);
 });
+
 
 // Bulk action over selected participants (or the whole list with `all: true`).
 // Reuses the same per-participant primitives so behavior can't drift.
@@ -263,9 +305,9 @@ events.post("/:id/participants/:hash/resend", async (c) => {
   return c.json({ ok: true });
 });
 
-// Edit a participant. The identity hash IS the doc id and the QR payload, so any
-// field change yields a new hash: we write the new doc and remove the old one,
-// carrying over attendance state and voiding the stale QR (resend required).
+// Edit a participant. Identity = name + email, so only those affect the QR/doc
+// id. Editing custom fields is a metadata update (QR unchanged). When name or
+// email changes we write the new doc and remove the old one, carrying state.
 events.patch("/:id/participants/:hash", async (c) => {
   const ev = await loadEvent(c);
   const oldHash = c.req.param("hash");
@@ -276,19 +318,21 @@ events.patch("/:id/participants/:hash", async (c) => {
   const identity = {
     name: (body.name != null ? requireString(body.name, "name", 160) : existing!.name).trim(),
     email: (body.email != null ? requireEmail(body.email) : existing!.email).trim().toLowerCase(),
-    country: (body.country != null ? requireString(body.country, "country", 80) : existing!.country)
-      .trim(),
-    phone: (body.phone != null ? requireString(body.phone, "phone", 40) : existing!.phone).trim(),
   };
   const newHash = await participantHash(identity);
 
   if (newHash !== oldHash && (await getParticipant(ev.orgId, ev.id, newHash))) {
-    fail(409, "Another participant already has these exact details.");
+    fail(409, "Another participant already has that name + email.");
   }
+
+  const fields = body.fields !== undefined
+    ? pickParticipantFields(ev, body.fields)
+    : (existing!.fields ?? {});
 
   const updated: Participant = {
     ...existing!,
     ...identity,
+    fields,
     hash: newHash,
     qrSentAt: newHash !== oldHash ? null : existing!.qrSentAt,
   };
@@ -297,6 +341,7 @@ events.patch("/:id/participants/:hash", async (c) => {
 
   return c.json({ participant: updated });
 });
+
 
 events.get("/:id/participants/:hash/qr.png", async (c) => {
   const ev = await loadEvent(c);

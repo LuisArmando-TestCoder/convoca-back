@@ -29,6 +29,18 @@ async function resolveLink(
   return { link: link!, org: org!, event: event! };
 }
 
+/** Collect + validate the team-defined field values a registrant submitted. */
+function pickFields(event: EventDoc, raw: unknown): Record<string, string> {
+  const src = (raw && typeof raw === "object") ? raw as Record<string, unknown> : {};
+  const out: Record<string, string> = {};
+  for (const f of event.fields ?? []) {
+    const v = typeof src[f.key] === "string" ? (src[f.key] as string).trim().slice(0, 300) : "";
+    if (v) out[f.key] = v;
+    else if (f.required) fail(400, `${f.label} is required.`);
+  }
+  return out;
+}
+
 // GET /register/:linkId — public event info for the registration form.
 publicRouter.get("/register/:linkId", async (c) => {
   const { org, event } = await resolveLink(c.req.param("linkId"));
@@ -40,6 +52,7 @@ publicRouter.get("/register/:linkId", async (c) => {
       date: event.date,
       location: event.location,
       mode: event.mode,
+      fields: event.fields ?? [],
     },
   });
 });
@@ -57,8 +70,7 @@ publicRouter.post("/register/:linkId", async (c) => {
   const outcome = await registerParticipant(org, event, {
     name: requireString(body.name, "name", 160),
     email: requireEmail(body.email),
-    country: requireString(body.country, "country", 80),
-    phone: requireString(body.phone, "phone", 40),
+    fields: pickFields(event, body.fields),
     source: "self",
     createdBy: "self-registration",
   });

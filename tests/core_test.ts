@@ -10,7 +10,7 @@ import { participantHash } from "../src/lib/hash.ts";
 
 Deno.env.set("JWT_SECRET", Deno.env.get("JWT_SECRET") ?? "test-secret");
 
-const FIELDS = { name: "Ada Lovelace", email: "ada@calc.io", country: "UK", phone: "+44 111" };
+const FIELDS = { name: "Ada Lovelace", email: "ada@calc.io" };
 
 Deno.test("identity hash is deterministic", async () => {
   const a = await participantHash(FIELDS);
@@ -21,14 +21,14 @@ Deno.test("identity hash is deterministic", async () => {
 
 Deno.test("identity hash normalizes email case + whitespace", async () => {
   const a = await participantHash(FIELDS);
-  const b = await participantHash({ ...FIELDS, email: "  ADA@Calc.IO  ", name: "Ada  Lovelace" });
+  const b = await participantHash({ email: "  ADA@Calc.IO  ", name: "Ada  Lovelace" });
   assertEquals(a, b);
 });
 
-Deno.test("different fields → different hash", async () => {
+Deno.test("identity is name + email — a different email is a different person", async () => {
   const a = await participantHash(FIELDS);
-  const c = await participantHash({ ...FIELDS, phone: "+44 222" });
-  assertNotEquals(a, c);
+  assertNotEquals(a, await participantHash({ ...FIELDS, email: "someone-else@calc.io" }));
+  assertNotEquals(a, await participantHash({ ...FIELDS, name: "Grace Hopper" }));
 });
 
 function hasCredentials(): boolean {
@@ -51,10 +51,18 @@ Deno.test({
 
     try {
       await upsertParticipant({
-        hash, orgId, eventId,
-        name: FIELDS.name, email: FIELDS.email, country: FIELDS.country, phone: FIELDS.phone,
-        createdBy: "test", qrSentAt: null, registered: false, registeredAt: null,
-        source: "manual", createdAt: new Date().toISOString(),
+        hash,
+        orgId,
+        eventId,
+        name: FIELDS.name,
+        email: FIELDS.email,
+        fields: { country: "UK" },
+        createdBy: "test",
+        qrSentAt: null,
+        registered: false,
+        registeredAt: null,
+        source: "manual",
+        createdAt: new Date().toISOString(),
       });
 
       assertEquals((await checkIn(orgId, eventId, hash)).outcome, "success");

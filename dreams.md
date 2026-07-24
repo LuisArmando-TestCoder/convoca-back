@@ -56,3 +56,12 @@ service-account key surfaced.
 - **CSV import now defers email** via a `sendInvite` option on `registerParticipant`; the existing `/resend` endpoint doubles as first-send. Reusing it avoided a new endpoint.
 - **Participant edit is a move, not an update:** identity is the doc id (= QR payload), so any field change recomputes the hash → write-new + delete-old, resetting `qrSentAt`. Worth remembering that "edit" is never in-place for hash-keyed docs.
 - **Regret:** the replace-in-file tool kept injecting phantom blank lines; `deno fmt` cleaned them but I should default to full rewrites for multi-hunk edits on this codebase.
+
+---
+
+## 2026-07-24 — Team-defined participant fields (country/phone demoted to examples)
+
+- **Identity shrank to name + email.** Custom fields (incl. country/phone) are now pure metadata, so editing them never reissues the QR, and the whole system got simpler. Backward compatible because existing docs keep their original 4-part-hash id — the QR only equals the stored doc id, which never changes.
+- **`EventDoc.fields[]` + `Participant.fields{}`** are optional and default to `[]`/`{}`, so pre-existing events/participants read cleanly with nothing seeded — exactly the "don't seed prod" requirement.
+- **One validation helper** (`pickParticipantFields`) is shared by manual add, CSV import, and self-reg, and the Firestore codec already handled nested maps/arrays, so persistence needed zero changes.
+- **Lesson:** confirming the identity model with one question up front (metadata vs. identity) prevented a much larger, irreversible refactor.

@@ -1,7 +1,13 @@
 // ── Identity hashing ─────────────────────────────────────────────────────────
 // The participant identity (and the value encoded in the QR) is the SHA-256 of
-// the four bare fields. Both participant creation and self-registration derive
-// it the SAME way, so re-submitting identical fields is idempotent (same id).
+// name + email. Everything else (country, phone, team-defined fields) is
+// metadata and never affects the QR. Creation and self-registration derive it
+// the SAME way, so re-submitting the same person is idempotent (same id).
+//
+// Backward compat: participants created before this change were keyed by
+// sha256(name,email,country,phone). Their doc id never changes, so their
+// already-issued QR still scans; only NEW ids use the name+email formula.
+
 
 /** Generic SHA-256 → lowercase hex. */
 export async function sha256Hex(input: string): Promise<string> {
@@ -15,24 +21,21 @@ export async function sha256Hex(input: string): Promise<string> {
 export interface IdentityFields {
   name: string;
   email: string;
-  country: string;
-  phone: string;
 }
 
 /**
- * Canonical serialization of a participant's four fields. Normalizing here is
- * what makes the hash stable: trim everything, lowercase the email, collapse
- * inner whitespace. Order is fixed: name, email, country, phone.
+ * Canonical serialization of a participant's identity. Normalizing here is what
+ * makes the hash stable: trim, collapse inner whitespace, lowercase the email.
+ * Order is fixed: name, email.
  */
 export function canonicalIdentity(f: IdentityFields): string {
   const norm = (s: string) => s.trim().replace(/\s+/g, " ");
   return [
     norm(f.name),
     norm(f.email).toLowerCase(),
-    norm(f.country),
-    norm(f.phone),
   ].join("\n");
 }
+
 
 /** SHA-256 of the canonical identity — the participant doc id and QR payload. */
 export function participantHash(f: IdentityFields): Promise<string> {

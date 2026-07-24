@@ -11,9 +11,12 @@ import { updateParticipant, upsertParticipant } from "../db/participants.ts";
 import type { EventDoc, Organization, Participant, ParticipantSource } from "../types.ts";
 
 export interface RegisterInput extends IdentityFields {
+  /** Team-defined field values, keyed by EventField.key. */
+  fields?: Record<string, string>;
   source: ParticipantSource;
   createdBy: string;
 }
+
 
 export interface RegisterOptions {
   /** Email the QR immediately. CSV imports pass false → participant stays pending. */
@@ -73,8 +76,7 @@ export async function registerParticipant(
     eventId: event.id,
     name: input.name.trim(),
     email: input.email.trim().toLowerCase(),
-    country: input.country.trim(),
-    phone: input.phone.trim(),
+    fields: input.fields ?? {},
     createdBy: input.createdBy,
     qrSentAt: null,
     registered: false,
@@ -82,6 +84,7 @@ export async function registerParticipant(
     source: input.source,
     createdAt: now,
   };
+
 
   const { created, participant } = await upsertParticipant(candidate);
 
