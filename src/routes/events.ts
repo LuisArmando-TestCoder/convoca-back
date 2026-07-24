@@ -215,11 +215,45 @@ events.post("/:id/participants/csv", async (c) => {
   return c.json(results);
 });
 
+// Bulk action over selected participants (or the whole list with `all: true`).
+// Reuses the same per-participant primitives so behavior can't drift.
+events.post("/:id/participants/bulk", async (c) => {
+  const ev = await loadEvent(c);
+  const org = c.get("org");
+  const body = await c.req.json().catch(() => ({}));
+  const action = body.action;
+  if (action !== "resend" && action !== "delete") fail(400, "Unknown bulk action.");
+
+  let hashes: string[] = Array.isArray(body.hashes) ? body.hashes.map(String) : [];
+  if (body.all === true) hashes = (await listParticipants(ev.orgId, ev.id)).map((p) => p.hash);
+  if (hashes.length === 0) fail(400, "No participants selected.");
+  if (hashes.length > 2000) fail(400, "Too many participants (max 2000 per action).");
+
+  const results = { ok: 0, failed: 0, errors: [] as string[] };
+  for (const hash of hashes) {
+    try {
+      const p = await getParticipant(ev.orgId, ev.id, hash);
+      if (!p) {
+        results.failed++;
+        continue;
+      }
+      if (action === "resend") await resendQr(org, ev, p);
+      else await deleteParticipant(ev.orgId, ev.id, hash);
+      results.ok++;
+    } catch (err) {
+      results.failed++;
+      if (results.errors.length < 10) results.errors.push((err as Error).message);
+    }
+  }
+  return c.json(results);
+});
+
 events.delete("/:id/participants/:hash", async (c) => {
   const ev = await loadEvent(c);
   await deleteParticipant(ev.orgId, ev.id, c.req.param("hash"));
   return c.json({ ok: true });
 });
+
 
 events.post("/:id/participants/:hash/resend", async (c) => {
   const ev = await loadEvent(c);
