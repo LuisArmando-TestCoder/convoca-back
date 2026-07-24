@@ -7,18 +7,22 @@ export type EventMode = "in_person" | "virtual" | "hybrid";
 
 export type ParticipantSource = "manual" | "csv" | "self";
 
-/** A tenant. Its id is sha256(email). Sends all its email via its own Gmail. */
+/**
+ * A tenant. Its id is sha256(email). Sends mail via the platform's central
+ * Gmail sender by default; may override it with its own Gmail (both fields set).
+ */
 export interface Organization {
   id: string;
   name: string;
   email: string;
-  /** Gmail address used as the SMTP sender (usually === email). */
+  /** Org's own Gmail sender address; "" ⇒ use the platform sender. */
   gmailUser: string;
-  /** Gmail App Password (16 chars, no spaces). Stored server-side only. */
+  /** Org's own Gmail App Password (16 chars, no spaces); "" ⇒ platform sender. */
   gmailPass: string;
   verified: boolean;
   createdAt: string;
 }
+
 
 /** A teammate the owner invited. Can sign in and scan/create participants. */
 export interface Collaborator {

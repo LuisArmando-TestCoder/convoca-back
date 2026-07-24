@@ -1,10 +1,14 @@
 // ── Email transport ──────────────────────────────────────────────────────────
-// Every tenant sends through ITS OWN Gmail using the App Password it provided at
-// signup. Transporters are cached per org (keyed by user+pass) so we don't spin
-// up a new SMTP connection on every send.
+// Mail goes out through the platform's own Gmail/Workspace sender (config.appEmail)
+// by default; a tenant may override it with its OWN Gmail App Password. Transporters
+// are cached per sender (keyed by user+pass) so we don't spin up a new SMTP
+// connection on every send.
+
 
 import nodemailer from "nodemailer";
-import type { Organization } from "../types.ts";
+import { config } from "../config.ts";
+
+
 
 interface Attachment {
   filename: string;
@@ -15,12 +19,14 @@ interface Attachment {
 
 
 interface SendArgs {
-  org: Pick<Organization, "name" | "gmailUser" | "gmailPass">;
+  /** Sender identity. Empty gmailUser/gmailPass ⇒ fall back to the app sender. */
+  org: { name: string; gmailUser?: string; gmailPass?: string };
   to: string;
   subject: string;
   html: string;
   attachments?: Attachment[];
 }
+
 
 const transporters = new Map<string, ReturnType<typeof nodemailer.createTransport>>();
 
@@ -54,15 +60,28 @@ export async function verifyGmail(user: string, pass: string): Promise<boolean> 
   }
 }
 
+/**
+ * Picks the sender: an org's own Gmail if it configured one, otherwise the
+ * platform's central sender. Throws if neither is available.
+ */
+function resolveSender(org: SendArgs["org"]): { user: string; pass: string } {
+  if (org.gmailUser && org.gmailPass) return { user: org.gmailUser, pass: org.gmailPass };
+  if (config.appEmail) return config.appEmail;
+  throw new Error(
+    "No email sender configured. Set APP_GMAIL_USER/APP_GMAIL_PASS or provide an org Gmail App Password.",
+  );
+}
 
 export async function sendEmail({ org, to, subject, html, attachments }: SendArgs): Promise<void> {
-  const t = transporterFor(org.gmailUser, org.gmailPass);
+  const { user, pass } = resolveSender(org);
+  const t = transporterFor(user, pass);
   await t.sendMail({
-    from: `"${org.name}" <${org.gmailUser}>`,
-    replyTo: org.gmailUser,
+    from: `"${org.name}" <${user}>`,
+    replyTo: user,
     to,
     subject,
     html,
     attachments,
   });
 }
+

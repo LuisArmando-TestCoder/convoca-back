@@ -1,8 +1,9 @@
 // ── Convoca API server ───────────────────────────────────────────────────────
-// A standalone multi-tenant event check-in SaaS. Deno + Hono + Deno KV. Each
-// organization signs in passwordless (OTP over its own Gmail), runs events,
-// invites participants (who receive a SHA-256 QR by email), and checks them in
-// by scanning that QR — with a duplicate-scan safeguard.
+// A standalone multi-tenant event check-in SaaS. Deno + Hono + Firestore. Each
+// organization signs in passwordless (OTP email), runs events, invites
+// participants (who receive a SHA-256 QR by email), and checks them in by
+// scanning that QR — with a duplicate-scan safeguard.
+
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -17,14 +18,19 @@ import publicRouter from "./src/routes/public.ts";
 
 const app = new Hono<AppEnv>();
 
+// CORS is intentionally wide open: any origin, any method, any header. Auth is a
+// stateless Bearer token (no cookies), so there's no credentialed-CORS risk.
 app.use(
   "*",
   cors({
-    origin: config.corsOrigins,
-    allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization"],
+    origin: "*",
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    allowHeaders: ["*"],
+    exposeHeaders: ["*"],
+    maxAge: 86400,
   }),
 );
+
 
 // Health check.
 app.get("/", (c) => c.json({ service: "convoca-api", ok: true }));

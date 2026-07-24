@@ -20,17 +20,20 @@ function int(name: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-// Local dev commonly runs the frontend on :3000, or :3001 when :3000 is taken.
-const DEV_ORIGINS = "http://localhost:3000,http://localhost:3001";
+// The platform's own Gmail / Google Workspace sender (App Password auth). When
+// set, it's the default sender for all outgoing mail; an org may still override
+// it with its own Gmail. Whitespace in the App Password is stripped.
+function appEmailFromEnv(): { user: string; pass: string } | null {
+  const user = Deno.env.get("APP_GMAIL_USER")?.trim();
+  const pass = (Deno.env.get("APP_GMAIL_PASS") ?? "").replace(/\s+/g, "");
+  return user && pass ? { user, pass } : null;
+}
 
 export const config = {
   jwtSecret: required("JWT_SECRET"),
   port: int("PORT", 8000),
   appBaseUrl: (Deno.env.get("APP_BASE_URL") ?? "http://localhost:3000").replace(/\/$/, ""),
-  corsOrigins: (Deno.env.get("CORS_ORIGINS") ?? DEV_ORIGINS)
-    .split(",")
-    .map((o) => o.trim())
-    .filter(Boolean),
+  appEmail: appEmailFromEnv(),
   serviceAccountPath: Deno.env.get("SERVICE_ACCOUNT_PATH") || "./service-account.json",
   firestoreDatabase: Deno.env.get("FIRESTORE_DATABASE") || "(default)",
   otpTtlMs: int("OTP_TTL_MINUTES", 10) * 60 * 1000,

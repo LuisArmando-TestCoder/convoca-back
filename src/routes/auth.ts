@@ -35,19 +35,28 @@ auth.post("/register", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const name = requireString(body.orgName, "orgName", 120);
   const email = requireEmail(body.email);
-  const gmailUser = requireEmail(body.gmailUser, "gmailUser");
-  const gmailPass = requireString(body.gmailPass, "gmailPass", 100).replace(/\s+/g, "");
+  // Org-owned Gmail is OPTIONAL: leave it blank to send through the platform's
+  // central sender (config.appEmail). If provided, both fields are used together.
+  const gmailPass = body.gmailPass
+    ? requireString(body.gmailPass, "gmailPass", 100).replace(/\s+/g, "")
+    : "";
+  const gmailUser = gmailPass ? (body.gmailUser ? requireEmail(body.gmailUser, "gmailUser") : email) : "";
 
   const existing = await getOrgByEmail(email);
   if (existing?.verified) {
     fail(409, "This organization is already registered. Sign in instead.");
   }
 
-  // Validate the Gmail App Password before persisting anything.
-  const ok = await verifyGmail(gmailUser, gmailPass);
-  if (!ok) {
-    fail(400, "Gmail credentials rejected. Use a 16-character App Password (not your login password).");
+  if (gmailPass) {
+    // Validate the org's own App Password before persisting anything.
+    const ok = await verifyGmail(gmailUser, gmailPass);
+    if (!ok) {
+      fail(400, "Gmail credentials rejected. Use a 16-character App Password (not your login password).");
+    }
+  } else if (!config.appEmail) {
+    fail(400, "Email delivery is not configured. Provide a Gmail App Password to continue.");
   }
+
 
   const id = existing?.id ?? (await computeOrgId(email));
   const org: Organization = {
