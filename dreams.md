@@ -47,3 +47,12 @@ service-account key surfaced.
 6. **No rate limiting on `/api/auth/*` or `/api/public/*`.** Fine for an MVP, but
    these are the abusable surfaces (OTP spam, self-reg flooding). Add a per-IP
    limiter before real traffic.
+
+---
+
+## 2026-07-23 — Central sender, pending CSV invites, editable participants
+
+- **Sender model pivoted cleanly** to a platform-wide account (`config.appEmail`) with per-org Gmail as an optional override, all behind the single `resolveSender()` seam in `email.ts` — no route/service changes needed. Adding `replyTo` (team inbox) was one field.
+- **CSV import now defers email** via a `sendInvite` option on `registerParticipant`; the existing `/resend` endpoint doubles as first-send. Reusing it avoided a new endpoint.
+- **Participant edit is a move, not an update:** identity is the doc id (= QR payload), so any field change recomputes the hash → write-new + delete-old, resetting `qrSentAt`. Worth remembering that "edit" is never in-place for hash-keyed docs.
+- **Regret:** the replace-in-file tool kept injecting phantom blank lines; `deno fmt` cleaned them but I should default to full rewrites for multi-hunk edits on this codebase.
