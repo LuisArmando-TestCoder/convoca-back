@@ -23,7 +23,6 @@ export interface Organization {
   createdAt: string;
 }
 
-
 /** A teammate the owner invited. Can sign in and scan/create participants. */
 export interface Collaborator {
   email: string;

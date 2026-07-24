@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { config } from "../config.ts";
 import { orgId as computeOrgId } from "../lib/hash.ts";
 import { fail, generateCode, requireEmail, requireString } from "../lib/validate.ts";
-import { verifyGmail, sendEmail } from "../lib/email.ts";
+import { sendEmail, verifyGmail } from "../lib/email.ts";
 import { otpEmail } from "../lib/emailTemplates.ts";
 import { issueSession } from "../lib/jwt.ts";
 import {
@@ -40,7 +40,9 @@ auth.post("/register", async (c) => {
   const gmailPass = body.gmailPass
     ? requireString(body.gmailPass, "gmailPass", 100).replace(/\s+/g, "")
     : "";
-  const gmailUser = gmailPass ? (body.gmailUser ? requireEmail(body.gmailUser, "gmailUser") : email) : "";
+  const gmailUser = gmailPass
+    ? (body.gmailUser ? requireEmail(body.gmailUser, "gmailUser") : email)
+    : "";
 
   const existing = await getOrgByEmail(email);
   if (existing?.verified) {
@@ -51,12 +53,14 @@ auth.post("/register", async (c) => {
     // Validate the org's own App Password before persisting anything.
     const ok = await verifyGmail(gmailUser, gmailPass);
     if (!ok) {
-      fail(400, "Gmail credentials rejected. Use a 16-character App Password (not your login password).");
+      fail(
+        400,
+        "Gmail credentials rejected. Use a 16-character App Password (not your login password).",
+      );
     }
   } else if (!config.appEmail) {
     fail(400, "Email delivery is not configured. Provide a Gmail App Password to continue.");
   }
-
 
   const id = existing?.id ?? (await computeOrgId(email));
   const org: Organization = {

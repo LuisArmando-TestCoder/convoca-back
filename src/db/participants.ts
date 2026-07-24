@@ -1,6 +1,14 @@
 // ── Participants repository (Firestore) ──────────────────────────────────────
 
-import { fsCasUpdate, fsCreate, fsDelete, fsGet, fsGetWithMeta, fsList, fsSet } from "./firestore.ts";
+import {
+  fsCasUpdate,
+  fsCreate,
+  fsDelete,
+  fsGet,
+  fsGetWithMeta,
+  fsList,
+  fsSet,
+} from "./firestore.ts";
 
 import { paths } from "./paths.ts";
 import type { CheckinResult, Participant } from "../types.ts";
@@ -29,7 +37,10 @@ export function getParticipant(
 }
 
 export async function updateParticipant(p: Participant): Promise<void> {
-  await fsSet(paths.participant(p.orgId, p.eventId, p.hash), p as unknown as Record<string, unknown>);
+  await fsSet(
+    paths.participant(p.orgId, p.eventId, p.hash),
+    p as unknown as Record<string, unknown>,
+  );
 }
 
 export async function deleteParticipant(
@@ -86,7 +97,6 @@ export async function checkIn(
     updated as unknown as Record<string, unknown>,
     entry.updateTime,
   );
-
 
   if (!won) {
     return {

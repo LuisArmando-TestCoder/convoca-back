@@ -3,16 +3,21 @@
 // Reused by the dashboard "add participant" path AND the public self-reg path so
 // the identity/QR/email behavior can never drift between them.
 
-import { participantHash, type IdentityFields } from "../lib/hash.ts";
+import { type IdentityFields, participantHash } from "../lib/hash.ts";
 import { qrDataUrl } from "../lib/qr.ts";
 import { sendEmail } from "../lib/email.ts";
 import { qrInviteEmail, selfRegConfirmEmail } from "../lib/emailTemplates.ts";
-import { upsertParticipant, updateParticipant } from "../db/participants.ts";
+import { updateParticipant, upsertParticipant } from "../db/participants.ts";
 import type { EventDoc, Organization, Participant, ParticipantSource } from "../types.ts";
 
 export interface RegisterInput extends IdentityFields {
   source: ParticipantSource;
   createdBy: string;
+}
+
+export interface RegisterOptions {
+  /** Email the QR immediately. CSV imports pass false → participant stays pending. */
+  sendInvite?: boolean;
 }
 
 export interface RegisterOutcome {
@@ -21,7 +26,7 @@ export interface RegisterOutcome {
   participant: Participant;
 }
 
-/** Renders the QR PNG from the participant hash and emails it via the org Gmail. */
+/** Renders the QR PNG from the participant hash and emails it via the resolved sender. */
 async function emailQr(
   org: Organization,
   event: EventDoc,
@@ -33,12 +38,14 @@ async function emailQr(
   const cid = "qr@convoca";
   const eventDate = event.date ? new Date(event.date).toLocaleString() : "";
   const tpl = isSelf
-    ? selfRegConfirmEmail(org.name, p.name, event.name, cid)
-    : qrInviteEmail(org.name, p.name, event.name, eventDate, cid);
+    ? selfRegConfirmEmail(org.name, p.name, event.name, event.description, cid)
+    : qrInviteEmail(org.name, p.name, event.name, eventDate, event.description, cid);
 
   await sendEmail({
     org,
     to: p.email,
+    // Replies go to the team's inbox even though it's sent from the platform account.
+    replyTo: org.email,
     subject: tpl.subject,
     html: tpl.html,
     attachments: [{
@@ -54,7 +61,9 @@ export async function registerParticipant(
   org: Organization,
   event: EventDoc,
   input: RegisterInput,
+  options: RegisterOptions = {},
 ): Promise<RegisterOutcome> {
+  const { sendInvite = true } = options;
   const hash = await participantHash(input);
   const now = new Date().toISOString();
 
@@ -76,8 +85,8 @@ export async function registerParticipant(
 
   const { created, participant } = await upsertParticipant(candidate);
 
-  // Only email a QR on first creation (idempotent re-adds don't re-spam).
-  if (!created) return { created: false, emailed: false, participant };
+  // Idempotent re-adds don't re-spam; deferred invites stay pending until sent.
+  if (!created || !sendInvite) return { created, emailed: false, participant };
 
   let emailed = false;
   try {
@@ -89,10 +98,14 @@ export async function registerParticipant(
     console.error(`[registerParticipant] QR email failed for ${participant.email}:`, err);
   }
 
-  return { created: true, emailed, participant: { ...participant, qrSentAt: emailed ? now : null } };
+  return {
+    created: true,
+    emailed,
+    participant: { ...participant, qrSentAt: emailed ? now : null },
+  };
 }
 
-/** Resend the QR email for an existing participant (dashboard action). */
+/** Resend (or first-send) the QR email for an existing participant. */
 export async function resendQr(
   org: Organization,
   event: EventDoc,

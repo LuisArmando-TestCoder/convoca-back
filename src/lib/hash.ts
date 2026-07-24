@@ -46,4 +46,3 @@ export function emailKey(email: string): Promise<string> {
 
 /** Organization id is the SHA-256 of its (lowercased) owner email. */
 export const orgId = emailKey;
-

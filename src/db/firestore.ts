@@ -92,7 +92,9 @@ function toValue(v: unknown): FsValue {
     return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
   }
   if (Array.isArray(v)) return { arrayValue: { values: v.map(toValue) } };
-  if (typeof v === "object") return { mapValue: { fields: toFields(v as Record<string, unknown>) } };
+  if (typeof v === "object") {
+    return { mapValue: { fields: toFields(v as Record<string, unknown>) } };
+  }
   throw new Error(`Unsupported value type: ${typeof v}`);
 }
 
@@ -189,12 +191,19 @@ export async function fsCreate(
   obj: Record<string, unknown>,
 ): Promise<boolean> {
   const url = `${await baseUrl()}/${collectionPath}?documentId=${encodeURIComponent(docId)}`;
-  const res = await authedFetch(url, { method: "POST", body: JSON.stringify({ fields: toFields(obj) }) });
+  const res = await authedFetch(url, {
+    method: "POST",
+    body: JSON.stringify({ fields: toFields(obj) }),
+  });
   if (res.status === 409) {
     await drain(res);
     return false;
   }
-  if (!res.ok) throw new Error(`fsCreate ${collectionPath}/${docId} failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    throw new Error(
+      `fsCreate ${collectionPath}/${docId} failed: ${res.status} ${await res.text()}`,
+    );
+  }
   await drain(res);
   return true;
 }
@@ -208,8 +217,13 @@ export async function fsCasUpdate(
   obj: Record<string, unknown>,
   updateTime: string,
 ): Promise<boolean> {
-  const url = `${await baseUrl()}/${path}?currentDocument.updateTime=${encodeURIComponent(updateTime)}`;
-  const res = await authedFetch(url, { method: "PATCH", body: JSON.stringify({ fields: toFields(obj) }) });
+  const url = `${await baseUrl()}/${path}?currentDocument.updateTime=${
+    encodeURIComponent(updateTime)
+  }`;
+  const res = await authedFetch(url, {
+    method: "PATCH",
+    body: JSON.stringify({ fields: toFields(obj) }),
+  });
   if (res.status === 400 || res.status === 409) {
     await drain(res); // FAILED_PRECONDITION → lost race
     return false;
@@ -227,7 +241,6 @@ export async function fsDelete(path: string): Promise<void> {
   await drain(res);
 }
 
-
 /** List all documents in a collection (paginated). Returns each doc's data + id. */
 export async function fsList<T>(collectionPath: string): Promise<Array<T & { _id: string }>> {
   const out: Array<T & { _id: string }> = [];
@@ -238,7 +251,9 @@ export async function fsList<T>(collectionPath: string): Promise<Array<T & { _id
     if (pageToken) url.searchParams.set("pageToken", pageToken);
     const res = await authedFetch(url.toString());
     if (res.status === 404) break;
-    if (!res.ok) throw new Error(`fsList ${collectionPath} failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) {
+      throw new Error(`fsList ${collectionPath} failed: ${res.status} ${await res.text()}`);
+    }
     const data = await res.json();
     for (const doc of data.documents ?? []) {
       const id = String(doc.name).split("/").pop()!;

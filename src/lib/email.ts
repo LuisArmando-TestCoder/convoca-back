@@ -4,11 +4,8 @@
 // are cached per sender (keyed by user+pass) so we don't spin up a new SMTP
 // connection on every send.
 
-
 import nodemailer from "nodemailer";
 import { config } from "../config.ts";
-
-
 
 interface Attachment {
   filename: string;
@@ -17,7 +14,6 @@ interface Attachment {
   cid?: string;
 }
 
-
 interface SendArgs {
   /** Sender identity. Empty gmailUser/gmailPass ⇒ fall back to the app sender. */
   org: { name: string; gmailUser?: string; gmailPass?: string };
@@ -25,8 +21,9 @@ interface SendArgs {
   subject: string;
   html: string;
   attachments?: Attachment[];
+  /** Address replies route to (the team). Defaults to the sending account. */
+  replyTo?: string;
 }
-
 
 const transporters = new Map<string, ReturnType<typeof nodemailer.createTransport>>();
 
@@ -72,16 +69,17 @@ function resolveSender(org: SendArgs["org"]): { user: string; pass: string } {
   );
 }
 
-export async function sendEmail({ org, to, subject, html, attachments }: SendArgs): Promise<void> {
+export async function sendEmail(
+  { org, to, subject, html, attachments, replyTo }: SendArgs,
+): Promise<void> {
   const { user, pass } = resolveSender(org);
   const t = transporterFor(user, pass);
   await t.sendMail({
     from: `"${org.name}" <${user}>`,
-    replyTo: user,
+    replyTo: replyTo || user,
     to,
     subject,
     html,
     attachments,
   });
 }
-

@@ -9,31 +9,21 @@ import type { Context } from "hono";
 import type { AppEnv } from "../context.ts";
 import { config } from "../config.ts";
 import { requireAuth } from "../middleware/auth.ts";
-import {
-  fail,
-  optionalString,
-  randomId,
-  requireEmail,
-  requireString,
-} from "../lib/validate.ts";
+import { fail, optionalString, randomId, requireEmail, requireString } from "../lib/validate.ts";
 import { parseCsv, type RawRow } from "../lib/csv.ts";
 import { qrPngBuffer } from "../lib/qr.ts";
-import {
-  createEvent,
-  deleteEvent,
-  getEvent,
-  listEvents,
-  updateEvent,
-} from "../db/events.ts";
+import { participantHash } from "../lib/hash.ts";
+import { createEvent, deleteEvent, getEvent, listEvents, updateEvent } from "../db/events.ts";
 import {
   checkIn,
   deleteParticipant,
   getParticipant,
   listParticipants,
+  updateParticipant,
 } from "../db/participants.ts";
 import { createLink, getLink, listLinks, setLinkActive } from "../db/links.ts";
 import { registerParticipant, resendQr } from "../services/registerParticipant.ts";
-import type { EventDoc, EventMode } from "../types.ts";
+import type { EventDoc, EventMode, Participant } from "../types.ts";
 
 const events = new Hono<AppEnv>();
 events.use("*", requireAuth);
@@ -57,7 +47,6 @@ async function loadEvent(c: Context<AppEnv>): Promise<EventDoc> {
   if (!ev) fail(404, "Event not found.");
   return ev!;
 }
-
 
 // ── Event CRUD ───────────────────────────────────────────────────────────────
 
@@ -206,6 +195,8 @@ events.post("/:id/participants/csv", async (c) => {
       continue;
     }
     try {
+      // Imported participants are created PENDING (no email); a collaborator
+      // sends each QR manually from the dashboard when ready.
       const out = await registerParticipant(org, ev, {
         name,
         email,
@@ -213,7 +204,7 @@ events.post("/:id/participants/csv", async (c) => {
         phone,
         source: "csv",
         createdBy,
-      });
+      }, { sendInvite: false });
       if (out.created) results.created++;
       else results.skipped++;
       if (out.emailed) results.emailed++;
@@ -238,6 +229,41 @@ events.post("/:id/participants/:hash/resend", async (c) => {
   return c.json({ ok: true });
 });
 
+// Edit a participant. The identity hash IS the doc id and the QR payload, so any
+// field change yields a new hash: we write the new doc and remove the old one,
+// carrying over attendance state and voiding the stale QR (resend required).
+events.patch("/:id/participants/:hash", async (c) => {
+  const ev = await loadEvent(c);
+  const oldHash = c.req.param("hash");
+  const existing = await getParticipant(ev.orgId, ev.id, oldHash);
+  if (!existing) fail(404, "Participant not found.");
+  const body = await c.req.json().catch(() => ({}));
+
+  const identity = {
+    name: (body.name != null ? requireString(body.name, "name", 160) : existing!.name).trim(),
+    email: (body.email != null ? requireEmail(body.email) : existing!.email).trim().toLowerCase(),
+    country: (body.country != null ? requireString(body.country, "country", 80) : existing!.country)
+      .trim(),
+    phone: (body.phone != null ? requireString(body.phone, "phone", 40) : existing!.phone).trim(),
+  };
+  const newHash = await participantHash(identity);
+
+  if (newHash !== oldHash && (await getParticipant(ev.orgId, ev.id, newHash))) {
+    fail(409, "Another participant already has these exact details.");
+  }
+
+  const updated: Participant = {
+    ...existing!,
+    ...identity,
+    hash: newHash,
+    qrSentAt: newHash !== oldHash ? null : existing!.qrSentAt,
+  };
+  await updateParticipant(updated);
+  if (newHash !== oldHash) await deleteParticipant(ev.orgId, ev.id, oldHash);
+
+  return c.json({ participant: updated });
+});
+
 events.get("/:id/participants/:hash/qr.png", async (c) => {
   const ev = await loadEvent(c);
   const p = await getParticipant(ev.orgId, ev.id, c.req.param("hash"));
@@ -251,7 +277,6 @@ events.get("/:id/participants/:hash/qr.png", async (c) => {
     },
   });
 });
-
 
 // ── Check-in scan ──────────────────────────────────────────────────────────────
 
