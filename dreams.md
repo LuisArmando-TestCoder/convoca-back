@@ -65,3 +65,10 @@ service-account key surfaced.
 - **`EventDoc.fields[]` + `Participant.fields{}`** are optional and default to `[]`/`{}`, so pre-existing events/participants read cleanly with nothing seeded — exactly the "don't seed prod" requirement.
 - **One validation helper** (`pickParticipantFields`) is shared by manual add, CSV import, and self-reg, and the Firestore codec already handled nested maps/arrays, so persistence needed zero changes.
 - **Lesson:** confirming the identity model with one question up front (metadata vs. identity) prevented a much larger, irreversible refactor.
+
+## QR emails silently dropped — text/plain fix (2026-07-24)
+- Symptom: OTP code emails arrived, single check-in QR email to the same address did not — app reported "sent".
+- Root cause: every template returned only `html`. With an inline QR image and no text part, nodemailer emits multipart/related (HTML-only). Gmail/Outlook "quishing" filters silently drop image-heavy, text-less mail — exactly the QR invite; the OTP survived because it has no image.
+- Fix: added a text/plain alternative to otp/qrInvite/selfReg templates and threaded `text` through sendEmail (now multipart/alternative). sendEmail also returns SMTP accepted/rejected for diagnostics.
+- Added scripts/send-test-email.ts: sends the exact [QR] email + a no-image [control] to any addresses. Probe run: Gmail accepted all 6 (auth via own@convoca.space now works) — so delivery-to-Gmail is fine; remaining drops are recipient-side filtering, which the QR-vs-control pair isolates.
+- Could improve next: host the QR as an https <img src> (S3/CDN) instead of inline attachment, and/or add List-Unsubscribe + a plain link fallback to further de-risk the image.
