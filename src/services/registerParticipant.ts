@@ -51,6 +51,8 @@ async function emailQr(
     replyTo: org.email,
     subject: tpl.subject,
     html: tpl.html,
+    // The plain-text alternative is what keeps this out of "quishing" spam drops.
+    text: tpl.text,
     attachments: [{
       filename: "checkin-qr.png",
       content: Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)),
@@ -58,6 +60,7 @@ async function emailQr(
       cid,
     }],
   });
+
 }
 
 export async function registerParticipant(

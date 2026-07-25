@@ -36,7 +36,10 @@ function layout(orgName: string, title: string, body: string): string {
 </body></html>`;
 }
 
-export function otpEmail(orgName: string, code: string): { subject: string; html: string } {
+export function otpEmail(
+  orgName: string,
+  code: string,
+): { subject: string; html: string; text: string } {
   const body = `
     <p style="margin:0 0 16px;font-size:15px;color:${MUTED};line-height:1.5;">
       Use this one-time code to sign in. It expires shortly.
@@ -47,11 +50,17 @@ export function otpEmail(orgName: string, code: string): { subject: string; html
   }</span>
     </div>
     <p style="margin:0;font-size:13px;color:${MUTED};">If you didn't request this, you can ignore this email.</p>`;
+  const text = `${orgName} sign-in code: ${code}\n\n` +
+    `Use this one-time code to sign in. It expires shortly.\n` +
+    `If you didn't request this, you can ignore this email.\n\n` +
+    `Sent via Convoca · event check-in`;
   return {
     subject: `Your ${orgName} sign-in code: ${code}`,
     html: layout(orgName, "Sign-in code", body),
+    text,
   };
 }
+
 
 function descriptionBlock(eventDescription: string): string {
   if (!eventDescription) return "";
@@ -70,7 +79,7 @@ export function qrInviteEmail(
   eventDate: string,
   eventDescription: string,
   qrCid: string,
-): { subject: string; html: string } {
+): { subject: string; html: string; text: string } {
   const body = `
     <p style="margin:0 0 16px;font-size:15px;color:${MUTED};line-height:1.5;">
       Hi ${esc(participantName)}, you're registered for <strong style="color:${INK};">${
@@ -86,9 +95,16 @@ export function qrInviteEmail(
       <img src="cid:${qrCid}" alt="Your check-in QR code" width="220" height="220" style="border-radius:12px;border:1px solid #e2e8f0;" />
     </div>
     <p style="margin:0;font-size:13px;color:${MUTED};">Keep this email handy — it's your ticket in.</p>`;
+  const text = `Hi ${participantName},\n\n` +
+    `You're registered for ${eventName}${eventDate ? ` on ${eventDate}` : ""}.\n` +
+    (eventDescription ? `\n${eventDescription}\n` : "") +
+    `\nYour personal check-in QR code is shown in this email and attached as ` +
+    `checkin-qr.png. Show it at the door to check in — keep this email handy, ` +
+    `it's your ticket in.\n\nSent via Convoca · event check-in`;
   return {
     subject: `Your check-in QR for ${eventName}`,
     html: layout(orgName, "You're in! 🎟️", body),
+    text,
   };
 }
 
@@ -98,7 +114,7 @@ export function selfRegConfirmEmail(
   eventName: string,
   eventDescription: string,
   qrCid: string,
-): { subject: string; html: string } {
+): { subject: string; html: string; text: string } {
   const body = `
     <p style="margin:0 0 16px;font-size:15px;color:${MUTED};line-height:1.5;">
       Thanks for registering, ${esc(participantName)}! Your spot for
@@ -110,8 +126,16 @@ export function selfRegConfirmEmail(
       <img src="cid:${qrCid}" alt="Your check-in QR code" width="220" height="220" style="border-radius:12px;border:1px solid #e2e8f0;" />
     </div>
     <p style="margin:0;font-size:13px;color:${MUTED};">Show this QR at the door to check in.</p>`;
+  const text = `Thanks for registering, ${participantName}!\n\n` +
+    `Your spot for ${eventName} is confirmed.\n` +
+    (eventDescription ? `\n${eventDescription}\n` : "") +
+    `\nYour personal check-in QR code is shown in this email and attached as ` +
+    `checkin-qr.png. Show it at the door to check in.\n\n` +
+    `Sent via Convoca · event check-in`;
   return {
     subject: `You're registered for ${eventName}`,
     html: layout(orgName, "Registration confirmed ✅", body),
+    text,
   };
 }
+

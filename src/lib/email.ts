@@ -20,10 +20,26 @@ interface SendArgs {
   to: string;
   subject: string;
   html: string;
+  /**
+   * Plain-text alternative. ALWAYS pass this: without it nodemailer emits an
+   * HTML-only message (multipart/related when there's an inline image), which
+   * spam filters — especially "quishing" filters that see a QR image with no
+   * text — silently drop. Providing text produces a standard multipart/alternative.
+   */
+  text?: string;
   attachments?: Attachment[];
   /** Address replies route to (the team). Defaults to the sending account. */
   replyTo?: string;
 }
+
+/** Minimal shape of nodemailer's send result we surface for diagnostics. */
+export interface SendResult {
+  accepted: string[];
+  rejected: string[];
+  response: string;
+  messageId: string;
+}
+
 
 const transporters = new Map<string, ReturnType<typeof nodemailer.createTransport>>();
 
@@ -70,16 +86,19 @@ function resolveSender(org: SendArgs["org"]): { user: string; pass: string } {
 }
 
 export async function sendEmail(
-  { org, to, subject, html, attachments, replyTo }: SendArgs,
-): Promise<void> {
+  { org, to, subject, html, text, attachments, replyTo }: SendArgs,
+): Promise<SendResult> {
   const { user, pass } = resolveSender(org);
   const t = transporterFor(user, pass);
-  await t.sendMail({
+  const info = await t.sendMail({
     from: `"${org.name}" <${user}>`,
     replyTo: replyTo || user,
     to,
     subject,
     html,
+    text,
     attachments,
   });
+  return info as unknown as SendResult;
 }
+

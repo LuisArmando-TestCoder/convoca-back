@@ -26,8 +26,9 @@ const auth = new Hono();
 async function issueOtp(org: Organization): Promise<void> {
   const code = generateCode(6);
   await saveOtp(org.email, code, config.otpTtlMs);
-  const { subject, html } = otpEmail(org.name, code);
-  await sendEmail({ org, to: org.email, subject, html });
+  const { subject, html, text } = otpEmail(org.name, code);
+  await sendEmail({ org, to: org.email, subject, html, text });
+
 }
 
 // POST /register — create an organization and send its first sign-in code.
@@ -98,8 +99,9 @@ auth.post("/request-code", async (c) => {
   // Gmail. Store under the login email so verify() matches on the same address.
   const code = generateCode(6);
   await saveOtp(email, code, config.otpTtlMs);
-  const { subject, html } = otpEmail(org!.name, code);
-  await sendEmail({ org: org!, to: email, subject, html });
+  const { subject, html, text } = otpEmail(org!.name, code);
+  await sendEmail({ org: org!, to: email, subject, html, text });
+
 
   return c.json({ ok: true, email, role: login.role });
 });
