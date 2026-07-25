@@ -4,7 +4,8 @@
 // the identity/QR/email behavior can never drift between them.
 
 import { type IdentityFields, participantHash } from "../lib/hash.ts";
-import { qrDataUrl } from "../lib/qr.ts";
+import { qrPngBuffer } from "../lib/qr.ts";
+
 import { sendEmail } from "../lib/email.ts";
 import { qrInviteEmail, selfRegConfirmEmail } from "../lib/emailTemplates.ts";
 import { updateParticipant, upsertParticipant } from "../db/participants.ts";
@@ -36,9 +37,9 @@ async function emailQr(
   p: Participant,
   isSelf: boolean,
 ): Promise<void> {
-  const dataUrl = await qrDataUrl(p.hash);
-  const base64 = dataUrl.split(",")[1] ?? "";
+  const qrPng = qrPngBuffer(p.hash);
   const cid = "qr@convoca";
+
   const eventDate = event.date ? new Date(event.date).toLocaleString() : "";
   const tpl = isSelf
     ? selfRegConfirmEmail(org.name, p.name, event.name, event.description, cid)
@@ -55,10 +56,11 @@ async function emailQr(
     text: tpl.text,
     attachments: [{
       filename: "checkin-qr.png",
-      content: Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)),
+      content: qrPng,
       contentType: "image/png",
       cid,
     }],
+
   });
 
 }
