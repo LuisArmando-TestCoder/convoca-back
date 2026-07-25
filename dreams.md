@@ -72,3 +72,9 @@ service-account key surfaced.
 - Fix: added a text/plain alternative to otp/qrInvite/selfReg templates and threaded `text` through sendEmail (now multipart/alternative). sendEmail also returns SMTP accepted/rejected for diagnostics.
 - Added scripts/send-test-email.ts: sends the exact [QR] email + a no-image [control] to any addresses. Probe run: Gmail accepted all 6 (auth via own@convoca.space now works) — so delivery-to-Gmail is fine; remaining drops are recipient-side filtering, which the QR-vs-control pair isolates.
 - Could improve next: host the QR as an https <img src> (S3/CDN) instead of inline attachment, and/or add List-Unsubscribe + a plain link fallback to further de-risk the image.
+
+## QR generation failed on the prod runtime — pure-JS PNG (2026-07-24)
+- Refined diagnosis: not a spam/quishing drop. Auth mail boots+sends in prod, so `qrcode` imports fine; the failure is at RUNTIME in its PNG renderer (pngjs → node:zlib/node:stream), which throws on restricted runtimes (e.g. Deno Deploy) but works under full Node compat locally. The throw was swallowed in registerParticipant, so the app still reported success.
+- Fix: rewrote src/lib/qr.ts to take ONLY the pure-JS matrix (QRCode.create) and encode the PNG by hand — 8-bit grayscale, CRC32 chunks, and a zlib stream built from uncompressed DEFLATE "stored" blocks + adler32. No pngjs, no zlib, no streams → runs anywhere. registerParticipant now uses qrPngBuffer directly (dropped the dataURL/atob round-trip).
+- Added scripts/verify-qr.ts: regenerates a QR and inflates its IDAT to assert a valid, non-blank PNG on the current runtime (200x200, 13824 dark px). Run it in the prod image to prove generation before trusting delivery.
+- Lesson: npm packages that lean on node:zlib/stream are runtime-fragile; prefer pure-JS or Web APIs for anything on the hot path of a serverless deploy. And never swallow a send/generation error into an optimistic "sent".
