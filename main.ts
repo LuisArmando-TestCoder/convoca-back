@@ -15,6 +15,8 @@ import authRouter from "./src/routes/auth.ts";
 import eventsRouter from "./src/routes/events.ts";
 import collaboratorsRouter from "./src/routes/collaborators.ts";
 import publicRouter from "./src/routes/public.ts";
+import streamRouter from "./src/routes/stream.ts";
+
 
 const app = new Hono<AppEnv>();
 
@@ -54,7 +56,11 @@ app.get("/api/me", requireAuth, (c) => {
 });
 
 app.route("/api/auth", authRouter);
+// Realtime WebSocket stream (query-token auth) — mounted before the authed
+// events router so it isn't gated by the Bearer-header middleware.
+app.route("/api/stream", streamRouter);
 app.route("/api/events", eventsRouter);
+
 app.route("/api/collaborators", collaboratorsRouter);
 app.route("/api/public", publicRouter);
 

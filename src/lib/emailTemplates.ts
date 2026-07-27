@@ -139,3 +139,73 @@ export function selfRegConfirmEmail(
   };
 }
 
+/** One row of a failed QR send, for the team failure report. */
+export interface FailureRow {
+  name: string;
+  email: string;
+  reason: string;
+  source: string;
+  extra: { label: string; value: string }[];
+}
+
+/**
+ * Sent to the team when a bulk QR send has failures, aggregating every bad
+ * recipient into one table so someone can act on it (fix the address, retry).
+ */
+export function failureReportEmail(
+  orgName: string,
+  eventName: string,
+  sent: number,
+  rows: FailureRow[],
+): { subject: string; html: string; text: string } {
+  const extraCols = rows[0]?.extra.map((e) => e.label) ?? [];
+  const th = (t: string) =>
+    `<th style="text-align:left;padding:8px 10px;border-bottom:2px solid #e2e8f0;font-size:12px;color:${MUTED};text-transform:uppercase;letter-spacing:.04em;">${
+      esc(t)
+    }</th>`;
+  const td = (t: string) =>
+    `<td style="padding:8px 10px;border-bottom:1px solid #eef2f7;font-size:13px;color:${INK};">${esc(t)}</td>`;
+
+  const head = `<tr>${th("Name")}${th("Email")}${th("Reason")}${th("Source")}${
+    extraCols.map(th).join("")
+  }</tr>`;
+  const body = rows.map((r) =>
+    `<tr>${td(r.name)}${td(r.email)}${td(r.reason)}${td(r.source)}${
+      r.extra.map((e) => td(e.value)).join("")
+    }</tr>`
+  ).join("");
+
+  const html = layout(
+    orgName,
+    "Some check-in emails didn't send",
+    `
+    <p style="margin:0 0 14px;font-size:15px;color:${MUTED};line-height:1.5;">
+      For <strong style="color:${INK};">${esc(eventName)}</strong>: ${sent} sent,
+      <strong style="color:#b91c1c;">${rows.length} failed</strong>. The failures are listed below —
+      fix the address (or investigate the reason) and resend from the dashboard.
+    </p>
+    <div style="overflow-x:auto;">
+      <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+        <thead>${head}</thead><tbody>${body}</tbody>
+      </table>
+    </div>`,
+  );
+
+  const textLines = rows.map((r) =>
+    `- ${r.name} <${r.email}> — ${r.reason} [${r.source}]${
+      r.extra.length ? " | " + r.extra.map((e) => `${e.label}: ${e.value}`).join(", ") : ""
+    }`
+  );
+  const text = `Some check-in emails didn't send for ${eventName}.\n\n` +
+    `${sent} sent, ${rows.length} failed:\n\n${textLines.join("\n")}\n\n` +
+    `Fix the address or investigate the reason, then resend from the dashboard.\n\n` +
+    `Sent via Convoca · event check-in`;
+
+  return {
+    subject: `${rows.length} check-in email${rows.length === 1 ? "" : "s"} failed — ${eventName}`,
+    html,
+    text,
+  };
+}
+
+

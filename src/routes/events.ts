@@ -23,8 +23,11 @@ import {
 } from "../db/participants.ts";
 import { createLink, getLink, listLinks, setLinkActive } from "../db/links.ts";
 import { registerParticipant, resendQr } from "../services/registerParticipant.ts";
+import { sendEmail } from "../lib/email.ts";
+import { failureReportEmail, type FailureRow } from "../lib/emailTemplates.ts";
+import { listCollaborators } from "../db/orgs.ts";
+import { broadcast, roomKey } from "../socket/hub.ts";
 import type { EventDoc, EventField, EventMode, Participant } from "../types.ts";
-
 
 const events = new Hono<AppEnv>();
 events.use("*", requireAuth);
@@ -42,7 +45,8 @@ function parseQuota(v: unknown): number | null {
 }
 
 const slugify = (s: string) =>
-  s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "field";
+  s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) ||
+  "field";
 
 /** Parse the team-defined field schema off an event create/patch body. */
 function parseEventFields(raw: unknown): EventField[] {
@@ -73,7 +77,6 @@ function pickParticipantFields(ev: EventDoc, raw: unknown): Record<string, strin
   }
   return out;
 }
-
 
 /** Loads the :id event for the current org or throws 404. */
 async function loadEvent(c: Context<AppEnv>): Promise<EventDoc> {
@@ -212,7 +215,6 @@ events.post("/:id/participants", async (c) => {
   return c.json(outcome, outcome.created ? 201 : 200);
 });
 
-
 events.post("/:id/participants/csv", async (c) => {
   const ev = await loadEvent(c);
   const org = c.get("org");
@@ -256,7 +258,6 @@ events.post("/:id/participants/csv", async (c) => {
   return c.json(results);
 });
 
-
 // Bulk action over selected participants (or the whole list with `all: true`).
 // Reuses the same per-participant primitives so behavior can't drift.
 events.post("/:id/participants/bulk", async (c) => {
@@ -290,12 +291,114 @@ events.post("/:id/participants/bulk", async (c) => {
   return c.json(results);
 });
 
+// Sequential QR send with LIVE progress. Sends one email at a time (throttled by
+// config.sendDelayMs to dodge Gmail's burst limits), broadcasting each step to
+// every teammate watching this event over the WebSocket room. Any failures are
+// aggregated into a single report emailed to the owner + collaborators.
+events.post("/:id/participants/send", async (c) => {
+  const ev = await loadEvent(c);
+  const org = c.get("org");
+  const body = await c.req.json().catch(() => ({}));
+
+  let hashes: string[] = Array.isArray(body.hashes) ? body.hashes.map(String) : [];
+  if (body.all === true) hashes = (await listParticipants(ev.orgId, ev.id)).map((p) => p.hash);
+  if (hashes.length === 0) fail(400, "No participants selected.");
+  if (hashes.length > 2000) fail(400, "Too many participants (max 2000 per send).");
+
+  const room = roomKey(ev.orgId, ev.id);
+  const total = hashes.length;
+  const by = c.get("session").email;
+  broadcast(room, { t: "start", total, by });
+
+  const failures: FailureRow[] = [];
+  let sent = 0;
+
+  for (let i = 0; i < hashes.length; i++) {
+    const hash = hashes[i];
+    const p = await getParticipant(ev.orgId, ev.id, hash);
+    if (!p) {
+      failures.push({
+        name: "(unknown)",
+        email: hash.slice(0, 16),
+        reason: "Participant not found",
+        source: "-",
+        extra: [],
+      });
+      broadcast(room, {
+        t: "item",
+        i,
+        total,
+        hash,
+        name: "(unknown)",
+        email: "",
+        status: "failed",
+        reason: "Participant not found",
+      });
+      continue;
+    }
+    broadcast(room, { t: "item", i, total, hash, name: p.name, email: p.email, status: "sending" });
+    try {
+      await resendQr(org, ev, p);
+      sent++;
+      broadcast(room, { t: "item", i, total, hash, name: p.name, email: p.email, status: "sent" });
+    } catch (err) {
+      const reason = (err as Error).message || "Send failed";
+      failures.push({
+        name: p.name,
+        email: p.email,
+        reason,
+        source: p.source,
+        extra: (ev.fields ?? []).map((f) => ({ label: f.label, value: p.fields?.[f.key] ?? "" })),
+      });
+      broadcast(room, {
+        t: "item",
+        i,
+        total,
+        hash,
+        name: p.name,
+        email: p.email,
+        status: "failed",
+        reason,
+      });
+    }
+    // Throttle between sends (not after the last one).
+    if (i < hashes.length - 1 && config.sendDelayMs > 0) {
+      await new Promise((r) => setTimeout(r, config.sendDelayMs));
+    }
+  }
+
+  // Aggregate any failures into one report emailed to the whole team.
+  let reportedTo: string | null = null;
+  if (failures.length > 0) {
+    try {
+      const collabs = await listCollaborators(ev.orgId);
+      const recipients = Array.from(
+        new Set([org.email, ...collabs.map((cb) => cb.email)].filter(Boolean)),
+      );
+      const tpl = failureReportEmail(org.name, ev.name, sent, failures);
+      await sendEmail({
+        org,
+        to: recipients.join(", "),
+        replyTo: org.email,
+        subject: tpl.subject,
+        html: tpl.html,
+        text: tpl.text,
+      });
+      reportedTo = recipients.join(", ");
+    } catch (err) {
+      console.error("[send] failure report email failed:", err);
+    }
+  }
+
+  broadcast(room, { t: "done", total, sent, failed: failures.length, reportedTo });
+  return c.json({ total, sent, failed: failures.length, reportedTo });
+});
+
 events.delete("/:id/participants/:hash", async (c) => {
   const ev = await loadEvent(c);
   await deleteParticipant(ev.orgId, ev.id, c.req.param("hash"));
   return c.json({ ok: true });
 });
-
 
 events.post("/:id/participants/:hash/resend", async (c) => {
   const ev = await loadEvent(c);
@@ -341,7 +444,6 @@ events.patch("/:id/participants/:hash", async (c) => {
 
   return c.json({ participant: updated });
 });
-
 
 events.get("/:id/participants/:hash/qr.png", async (c) => {
   const ev = await loadEvent(c);

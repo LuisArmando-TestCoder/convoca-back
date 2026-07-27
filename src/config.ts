@@ -38,4 +38,8 @@ export const config = {
   firestoreDatabase: Deno.env.get("FIRESTORE_DATABASE") || "(default)",
   otpTtlMs: int("OTP_TTL_MINUTES", 10) * 60 * 1000,
   sessionTtlSec: int("SESSION_TTL_DAYS", 7) * 24 * 60 * 60,
+  // Pause between each QR email in a bulk send, so a burst doesn't trip Gmail's
+  // per-second/per-minute limits (which silently drop the overflow).
+  sendDelayMs: int("SEND_DELAY_MS", 700),
 } as const;
+
