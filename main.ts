@@ -6,8 +6,8 @@
 
 
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
+
 import { config } from "./src/config.ts";
 import type { AppEnv } from "./src/context.ts";
 import { requireAuth } from "./src/middleware/auth.ts";
@@ -20,18 +20,28 @@ import streamRouter from "./src/routes/stream.ts";
 
 const app = new Hono<AppEnv>();
 
-// CORS is intentionally wide open: any origin, any method, any header. Auth is a
-// stateless Bearer token (no cookies), so there's no credentialed-CORS risk.
-app.use(
-  "*",
-  cors({
-    origin: "*",
-    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-    allowHeaders: ["*"],
-    exposeHeaders: ["*"],
-    maxAge: 86400,
-  }),
-);
+// CORS — fully open. Auth is a stateless Bearer token, so wildcard origin is safe.
+// Using a raw manual middleware instead of hono/cors so that Render's reverse proxy
+// can't swallow the preflight response: OPTIONS gets an explicit 204 with all headers
+// set in a fresh Response, and every other response also gets the allow-origin header.
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD",
+  "Access-Control-Allow-Headers": "*",
+  "Access-Control-Expose-Headers": "*",
+  "Access-Control-Max-Age": "86400",
+};
+
+app.use("*", async (c, next) => {
+  if (c.req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+  await next();
+  for (const [k, v] of Object.entries(CORS_HEADERS)) {
+    c.header(k, v);
+  }
+});
+
 
 
 // Health check.
@@ -65,7 +75,10 @@ app.route("/api/collaborators", collaboratorsRouter);
 app.route("/api/public", publicRouter);
 
 // Centralized error shaping: HTTPException → its status; anything else → 500.
+// Explicitly set CORS headers here too so error responses (401, 404, 500…)
+// are readable by the browser even when the middleware's post-next code skips.
 app.onError((err, c) => {
+  c.header("Access-Control-Allow-Origin", "*");
   if (err instanceof HTTPException) {
     return c.json({ error: err.message }, err.status);
   }
@@ -73,6 +86,10 @@ app.onError((err, c) => {
   return c.json({ error: "Internal server error." }, 500);
 });
 
-app.notFound((c) => c.json({ error: "Not found." }, 404));
+app.notFound((c) => {
+  c.header("Access-Control-Allow-Origin", "*");
+  return c.json({ error: "Not found." }, 404);
+});
+
 
 Deno.serve({ port: config.port, onListen: ({ port }) => console.log(`convoca-api on :${port}`) }, app.fetch);
