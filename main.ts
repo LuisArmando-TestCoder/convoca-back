@@ -14,6 +14,8 @@ import { requireAuth } from "./src/middleware/auth.ts";
 import authRouter from "./src/routes/auth.ts";
 import eventsRouter from "./src/routes/events.ts";
 import collaboratorsRouter from "./src/routes/collaborators.ts";
+import participantsRouter from "./src/routes/participants.ts";
+import certificatesRouter from "./src/routes/certificates.ts";
 import publicRouter from "./src/routes/public.ts";
 import streamRouter from "./src/routes/stream.ts";
 
@@ -72,6 +74,8 @@ app.route("/api/stream", streamRouter);
 app.route("/api/events", eventsRouter);
 
 app.route("/api/collaborators", collaboratorsRouter);
+app.route("/api/participants", participantsRouter);
+app.route("/api/certificates", certificatesRouter);
 app.route("/api/public", publicRouter);
 
 // Centralized error shaping: HTTPException → its status; anything else → 500.

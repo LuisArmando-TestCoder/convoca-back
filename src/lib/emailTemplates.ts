@@ -108,6 +108,32 @@ export function qrInviteEmail(
   };
 }
 
+export function certificateEmail(
+  orgName: string,
+  recipientName: string,
+): { subject: string; html: string; text: string } {
+  const body = `
+    <p style="margin:0 0 16px;font-size:15px;color:${MUTED};line-height:1.5;">
+      Hi ${esc(recipientName)}, congratulations! Your certificate is ready.
+    </p>
+    <p style="margin:0 0 16px;font-size:15px;color:${MUTED};line-height:1.5;">
+      Your personalized certificate is attached to this email as a PDF. Download
+      it and keep it handy — it's yours to share.
+    </p>
+    <p style="margin:0;font-size:13px;color:${MUTED};">If you have any questions, just reply to this email.</p>`;
+  const text = `Hi ${recipientName},\n\n` +
+    `Congratulations! Your certificate is ready.\n\n` +
+    `Your personalized certificate is attached to this email as a PDF. ` +
+    `Download it and keep it handy — it's yours to share.\n\n` +
+    `If you have any questions, just reply to this email.\n\n` +
+    `Sent via Convoca · certificate delivery`;
+  return {
+    subject: "Your certificate is ready 🎓",
+    html: layout(orgName, "Your certificate 🎓", body),
+    text,
+  };
+}
+
 export function selfRegConfirmEmail(
   orgName: string,
   participantName: string,
