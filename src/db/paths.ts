@@ -30,4 +30,8 @@ export const paths = {
     `organizations/${orgId}/events/${eventId}/link_ids`,
   linkIndex: (orgId: string, eventId: string, linkId: string) =>
     `organizations/${orgId}/events/${eventId}/link_ids/${linkId}`,
+
+  certificateSendsCol: (orgId: string) => `organizations/${orgId}/certificate_sends`,
+  certificateSend: (orgId: string, sendId: string) =>
+    `organizations/${orgId}/certificate_sends/${sendId}`,
 };

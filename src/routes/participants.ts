@@ -14,6 +14,30 @@ const participants = new Hono<AppEnv>();
 participants.use("*", requireAuth);
 
 /**
+ * GET /api/participants/list
+ * Returns a flat, de-duplicated list of every participant across the org's
+ * events (name + email + the event they were found in). Used by the
+ * certificate tool's bulk-send panel.
+ */
+participants.get("/list", async (c) => {
+  const org = c.get("org");
+  const events = await listEvents(org.id);
+  const seen = new Map<string, { name: string; email: string; eventName: string }>();
+  for (const ev of events) {
+    const rows = await listParticipants(org.id, ev.id);
+    for (const p of rows) {
+      const key = p.email.toLowerCase();
+      if (!seen.has(key)) {
+        seen.set(key, { name: p.name, email: p.email, eventName: ev.name });
+      }
+    }
+  }
+  return c.json({
+    participants: Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name)),
+  });
+});
+
+/**
  * GET /api/participants/lookup?email=…
  * Searches the org's participants (across every event) for a matching email and
  * returns the first match's name + email. 404 if none found.
