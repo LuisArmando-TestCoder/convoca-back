@@ -6,7 +6,8 @@
 
 import { Hono } from "hono";
 import { readSession } from "../lib/jwt.ts";
-import { getOrg } from "../db/orgs.ts";
+import { emailKey } from "../lib/hash.ts";
+import { getCollaborator, getOrg } from "../db/orgs.ts";
 import { join, leave, roomKey } from "../socket/hub.ts";
 
 const stream = new Hono();
@@ -22,6 +23,16 @@ stream.get("/:eventId", async (c) => {
 
   const org = await getOrg(claims.orgId);
   if (!org || !org.verified) return c.text("Organization not available.", 403);
+
+  // Collaborators may only join rooms for events they've been granted. Re-read
+  // the collaborator doc so revocations take effect immediately.
+  if (claims.role === "collaborator") {
+    const collab = await getCollaborator(claims.orgId, await emailKey(claims.email));
+    if (!collab) return c.text("Your access has been revoked.", 403);
+    if (!(collab.eventIds ?? []).includes(c.req.param("eventId"))) {
+      return c.text("You don't have access to this event.", 403);
+    }
+  }
 
   const eventId = c.req.param("eventId");
   const room = roomKey(claims.orgId, eventId);

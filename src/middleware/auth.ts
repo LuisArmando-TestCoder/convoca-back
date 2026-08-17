@@ -6,7 +6,8 @@ import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import type { AppEnv } from "../context.ts";
 import { readSession } from "../lib/jwt.ts";
-import { getOrg } from "../db/orgs.ts";
+import { emailKey } from "../lib/hash.ts";
+import { getCollaborator, getOrg } from "../db/orgs.ts";
 
 export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
   const header = c.req.header("Authorization") ?? "";
@@ -20,7 +21,17 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
   if (!org) throw new HTTPException(401, { message: "Organization no longer exists." });
   if (!org.verified) throw new HTTPException(403, { message: "Organization not verified." });
 
-  c.set("session", claims);
+  // Collaborator access is event-scoped. Re-read the collaborator doc on every
+  // request so revocations and scope edits take effect immediately, ignoring
+  // whatever eventIds the (possibly stale) token still carries.
+  let session = claims;
+  if (claims.role === "collaborator") {
+    const collab = await getCollaborator(claims.orgId, await emailKey(claims.email));
+    if (!collab) throw new HTTPException(403, { message: "Your access has been revoked." });
+    session = { ...claims, eventIds: collab.eventIds };
+  }
+
+  c.set("session", session);
   c.set("org", org);
   await next();
 });

@@ -21,7 +21,11 @@ participants.use("*", requireAuth);
  */
 participants.get("/list", async (c) => {
   const org = c.get("org");
-  const events = await listEvents(org.id);
+  const session = c.get("session");
+  const allowed = session.role === "collaborator" && session.eventIds !== undefined
+    ? new Set(session.eventIds)
+    : null;
+  const events = (await listEvents(org.id)).filter((ev) => !allowed || allowed.has(ev.id));
   const seen = new Map<string, { name: string; email: string; eventName: string }>();
   for (const ev of events) {
     const rows = await listParticipants(org.id, ev.id);
@@ -44,9 +48,13 @@ participants.get("/list", async (c) => {
  */
 participants.get("/lookup", async (c) => {
   const org = c.get("org");
+  const session = c.get("session");
   const email = requireEmail(c.req.query("email") ?? "", "email");
 
-  const events = await listEvents(org.id);
+  const allowed = session.role === "collaborator" && session.eventIds !== undefined
+    ? new Set(session.eventIds)
+    : null;
+  const events = (await listEvents(org.id)).filter((ev) => !allowed || allowed.has(ev.id));
   for (const ev of events) {
     const rows = await listParticipants(org.id, ev.id);
     const hit = rows.find((p) => p.email.toLowerCase() === email);

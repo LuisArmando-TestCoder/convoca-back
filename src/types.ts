@@ -40,6 +40,8 @@ export interface Collaborator {
   name: string;
   orgId: string;
   addedAt: string;
+  /** Event ids this collaborator may access. Absent/undefined = legacy: ALL org events. */
+  eventIds?: string[];
 }
 
 export interface EventDoc {
@@ -88,6 +90,10 @@ export interface SelfRegLink {
   id: string;
   orgId: string;
   eventId: string;
+  /** Optional display name shown on the registration page (WYSIWYG label). */
+  name: string;
+  /** Per-link registration fields; overrides the event's schema for this link. */
+  fields: EventField[];
   active: boolean;
   createdBy: string;
   createdAt: string;
@@ -99,6 +105,8 @@ export interface SessionClaims {
   email: string;
   orgId: string;
   role: Role;
+  /** Event ids a collaborator may access; undefined = all org events (legacy/owner). */
+  eventIds?: string[];
   /** Standard JWT expiry (seconds since epoch). */
   exp: number;
 }

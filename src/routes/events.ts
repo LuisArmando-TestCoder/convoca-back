@@ -21,13 +21,13 @@ import {
   listParticipants,
   updateParticipant,
 } from "../db/participants.ts";
-import { createLink, getLink, listLinks, setLinkActive } from "../db/links.ts";
+import { createLink, deleteLink, getLink, listLinks, updateLink } from "../db/links.ts";
 import { registerParticipant, resendQr } from "../services/registerParticipant.ts";
 import { sendEmail } from "../lib/email.ts";
 import { failureReportEmail, type FailureRow } from "../lib/emailTemplates.ts";
 import { listCollaborators } from "../db/orgs.ts";
 import { broadcast, roomKey } from "../socket/hub.ts";
-import type { EventDoc, EventField, EventMode, Participant } from "../types.ts";
+import type { EventDoc, EventField, EventMode, Participant, SelfRegLink } from "../types.ts";
 
 const events = new Hono<AppEnv>();
 events.use("*", requireAuth);
@@ -80,16 +80,29 @@ function pickParticipantFields(ev: EventDoc, raw: unknown): Record<string, strin
 
 /** Loads the :id event for the current org or throws 404. */
 async function loadEvent(c: Context<AppEnv>): Promise<EventDoc> {
-  const orgId = c.get("session").orgId;
+  const session = c.get("session");
+  const orgId = session.orgId;
   const ev = await getEvent(orgId, c.req.param("id") ?? "");
   if (!ev) fail(404, "Event not found.");
+  // Collaborators are scoped to the events they've been granted.
+  if (session.role === "collaborator" && session.eventIds !== undefined) {
+    if (!session.eventIds.includes(ev.id)) {
+      fail(403, "You don't have access to this event.");
+    }
+  }
   return ev!;
 }
 
 // ── Event CRUD ───────────────────────────────────────────────────────────────
 
 events.get("/", async (c) => {
-  const list = await listEvents(c.get("session").orgId);
+  const session = c.get("session");
+  const list = await listEvents(session.orgId);
+  // Collaborators only see the events they've been granted.
+  if (session.role === "collaborator" && session.eventIds !== undefined) {
+    const allowed = new Set(session.eventIds);
+    return c.json({ events: list.filter((ev) => allowed.has(ev.id)) });
+  }
   return c.json({ events: list });
 });
 
@@ -484,10 +497,13 @@ events.get("/:id/links", async (c) => {
 
 events.post("/:id/links", async (c) => {
   const ev = await loadEvent(c);
-  const link = {
+  const body = await c.req.json().catch(() => ({}));
+  const link: SelfRegLink = {
     id: randomId(10),
     orgId: ev.orgId,
     eventId: ev.id,
+    name: body.name != null ? requireString(body.name, "name", 120) : "",
+    fields: body.fields !== undefined ? parseEventFields(body.fields) : (ev.fields ?? []),
     active: true,
     createdBy: c.get("session").email,
     createdAt: new Date().toISOString(),
@@ -502,9 +518,23 @@ events.patch("/:id/links/:linkId", async (c) => {
   const link = await getLink(c.req.param("linkId"));
   if (!link || link.orgId !== ev.orgId || link.eventId !== ev.id) fail(404, "Link not found.");
   const body = await c.req.json().catch(() => ({}));
-  const active = Boolean(body.active);
-  await setLinkActive(link!, active);
-  return c.json({ link: { ...link!, active, url: linkUrl(link!.id) } });
+
+  const updated: SelfRegLink = {
+    ...link!,
+    active: body.active !== undefined ? Boolean(body.active) : link!.active,
+    name: body.name !== undefined ? requireString(body.name, "name", 120) : link!.name,
+    fields: body.fields !== undefined ? parseEventFields(body.fields) : (link!.fields ?? []),
+  };
+  await updateLink(updated);
+  return c.json({ link: { ...updated, url: linkUrl(updated.id) } });
+});
+
+events.delete("/:id/links/:linkId", async (c) => {
+  const ev = await loadEvent(c);
+  const link = await getLink(c.req.param("linkId"));
+  if (!link || link.orgId !== ev.orgId || link.eventId !== ev.id) fail(404, "Link not found.");
+  await deleteLink(link.id);
+  return c.json({ ok: true });
 });
 
 export default events;

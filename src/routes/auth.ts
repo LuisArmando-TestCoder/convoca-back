@@ -12,6 +12,7 @@ import { issueSession } from "../lib/jwt.ts";
 import {
   consumeOtp,
   createOrg,
+  getCollaboratorByEmail,
   getOrg,
   getOrgByEmail,
   resolveLogin,
@@ -124,8 +125,16 @@ auth.post("/verify", async (c) => {
     if (org && !org.verified) await updateOrg({ ...org, verified: true });
   }
 
-  const token = await issueSession(email, login.orgId, login.role);
-  return c.json({ token, role: login.role, orgId: login.orgId });
+  // Collaborators carry their event scope in the token so the client can
+  // render the right event list immediately; the middleware re-validates it.
+  let eventIds: string[] | undefined;
+  if (login.role === "collaborator") {
+    const collab = await getCollaboratorByEmail(login.orgId, email);
+    eventIds = collab?.eventIds;
+  }
+
+  const token = await issueSession(email, login.orgId, login.role, eventIds);
+  return c.json({ token, role: login.role, orgId: login.orgId, eventIds });
 });
 
 export default auth;

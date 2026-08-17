@@ -6,9 +6,14 @@ import { sign, verify } from "hono/jwt";
 import { config } from "../config.ts";
 import type { Role, SessionClaims } from "../types.ts";
 
-export async function issueSession(email: string, orgId: string, role: Role): Promise<string> {
+export async function issueSession(
+  email: string,
+  orgId: string,
+  role: Role,
+  eventIds?: string[],
+): Promise<string> {
   const exp = Math.floor(Date.now() / 1000) + config.sessionTtlSec;
-  return await sign({ email, orgId, role, exp }, config.jwtSecret, "HS256");
+  return await sign({ email, orgId, role, eventIds, exp }, config.jwtSecret, "HS256");
 }
 
 export async function readSession(token: string): Promise<SessionClaims | null> {

@@ -2,7 +2,7 @@
 // The full link lives at a top-level `links/{id}` (public lookup by id needs no
 // org context). A per-event index subcollection lets the dashboard list them.
 
-import { fsGet, fsListIds, fsSet } from "./firestore.ts";
+import { fsDelete, fsGet, fsListIds, fsSet } from "./firestore.ts";
 import { paths } from "./paths.ts";
 import type { SelfRegLink } from "../types.ts";
 
@@ -25,4 +25,12 @@ export async function listLinks(orgId: string, eventId: string): Promise<SelfReg
 
 export async function setLinkActive(link: SelfRegLink, active: boolean): Promise<void> {
   await fsSet(paths.link(link.id), { ...link, active } as unknown as Record<string, unknown>);
+}
+
+export async function updateLink(link: SelfRegLink): Promise<void> {
+  await fsSet(paths.link(link.id), link as unknown as Record<string, unknown>);
+}
+
+export async function deleteLink(linkId: string): Promise<void> {
+  await fsDelete(paths.link(linkId));
 }

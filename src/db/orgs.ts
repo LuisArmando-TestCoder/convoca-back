@@ -33,6 +33,24 @@ export async function addCollaborator(c: Collaborator): Promise<void> {
   await fsSet(paths.collaboratorIndex(key), { orgId: c.orgId });
 }
 
+export async function getCollaborator(
+  orgId: string,
+  collabKey: string,
+): Promise<Collaborator | null> {
+  return fsGet<Collaborator>(paths.collaborator(orgId, collabKey));
+}
+
+export async function getCollaboratorByEmail(
+  orgId: string,
+  email: string,
+): Promise<Collaborator | null> {
+  return getCollaborator(orgId, await emailKey(email));
+}
+
+export async function updateCollaborator(c: Collaborator): Promise<void> {
+  await fsSet(paths.collaborator(c.orgId, await emailKey(c.email)), c as unknown as Record<string, unknown>);
+}
+
 export async function removeCollaborator(orgId: string, email: string): Promise<void> {
   const key = await emailKey(email);
   await fsDelete(paths.collaborator(orgId, key));

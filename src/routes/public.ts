@@ -9,7 +9,7 @@ import { getEvent } from "../db/events.ts";
 import { getOrg } from "../db/orgs.ts";
 import { listParticipants } from "../db/participants.ts";
 import { registerParticipant } from "../services/registerParticipant.ts";
-import type { EventDoc, Organization, SelfRegLink } from "../types.ts";
+import type { EventDoc, EventField, Organization, SelfRegLink } from "../types.ts";
 
 const publicRouter = new Hono();
 
@@ -29,11 +29,11 @@ async function resolveLink(
   return { link: link!, org: org!, event: event! };
 }
 
-/** Collect + validate the team-defined field values a registrant submitted. */
-function pickFields(event: EventDoc, raw: unknown): Record<string, string> {
+/** Collect + validate the field values a registrant submitted against a schema. */
+function pickFields(fields: EventField[], raw: unknown): Record<string, string> {
   const src = (raw && typeof raw === "object") ? raw as Record<string, unknown> : {};
   const out: Record<string, string> = {};
-  for (const f of event.fields ?? []) {
+  for (const f of fields ?? []) {
     const v = typeof src[f.key] === "string" ? (src[f.key] as string).trim().slice(0, 300) : "";
     if (v) out[f.key] = v;
     else if (f.required) fail(400, `${f.label} is required.`);
@@ -42,24 +42,27 @@ function pickFields(event: EventDoc, raw: unknown): Record<string, string> {
 }
 
 // GET /register/:linkId — public event info for the registration form.
+// The form renders the LINK's own field schema (each link can carry its own
+// options), falling back to the event's fields for legacy links.
 publicRouter.get("/register/:linkId", async (c) => {
-  const { org, event } = await resolveLink(c.req.param("linkId"));
+  const { org, event, link } = await resolveLink(c.req.param("linkId"));
   return c.json({
     orgName: org.name,
+    linkName: link.name,
     event: {
       name: event.name,
       description: event.description,
       date: event.date,
       location: event.location,
       mode: event.mode,
-      fields: event.fields ?? [],
+      fields: (link.fields && link.fields.length ? link.fields : (event.fields ?? [])),
     },
   });
 });
 
 // POST /register/:linkId — a person registers themselves and gets a QR by email.
 publicRouter.post("/register/:linkId", async (c) => {
-  const { org, event } = await resolveLink(c.req.param("linkId"));
+  const { org, event, link } = await resolveLink(c.req.param("linkId"));
   const body = await c.req.json().catch(() => ({}));
 
   if (event.quota != null) {
@@ -67,10 +70,11 @@ publicRouter.post("/register/:linkId", async (c) => {
     if (current >= event.quota) fail(409, "Registration is full for this event.");
   }
 
+  const fields = link.fields && link.fields.length ? link.fields : (event.fields ?? []);
   const outcome = await registerParticipant(org, event, {
     name: requireString(body.name, "name", 160),
     email: requireEmail(body.email),
-    fields: pickFields(event, body.fields),
+    fields: pickFields(fields, body.fields),
     source: "self",
     createdBy: "self-registration",
   });
