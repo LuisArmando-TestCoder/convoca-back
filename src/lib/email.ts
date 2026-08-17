@@ -1,8 +1,10 @@
 // ── Email transport ──────────────────────────────────────────────────────────
-// Mail goes out through the platform's own Gmail/Workspace sender (config.appEmail)
-// by default; a tenant may override it with its OWN Gmail App Password. Transporters
-// are cached per sender (keyed by user+pass) so we don't spin up a new SMTP
-// connection on every send.
+// ALL mail goes out through the platform's own Gmail/Workspace sender
+// (config.appEmail = APP_GMAIL_USER/APP_GMAIL_PASS). A tenant's stored Gmail
+// App Password (gmailUser/gmailPass on the org doc) is intentionally ignored for
+// sending, so recipients never see an unrelated personal address in the From
+// line. Transporters are cached per sender (keyed by user+pass) so we don't spin
+// up a new SMTP connection on every send.
 
 import nodemailer from "nodemailer";
 import { config } from "../config.ts";
@@ -15,7 +17,8 @@ interface Attachment {
 }
 
 interface SendArgs {
-  /** Sender identity. Empty gmailUser/gmailPass ⇒ fall back to the app sender. */
+  /** Display identity for the From line. gmailUser/gmailPass are LEGACY and
+   * deliberately ignored in favor of the platform sender. */
   org: { name: string; gmailUser?: string; gmailPass?: string };
   to: string;
   subject: string;
@@ -74,21 +77,22 @@ export async function verifyGmail(user: string, pass: string): Promise<boolean> 
 }
 
 /**
- * Picks the sender: an org's own Gmail if it configured one, otherwise the
- * platform's central sender. Throws if neither is available.
+ * Picks the sender: ALWAYS the platform's central sender (config.appEmail).
+ * A tenant's own Gmail credentials are legacy and ignored so emails can never
+ * go out from an org owner's personal address. Throws if the env sender is
+ * unset.
  */
-function resolveSender(org: SendArgs["org"]): { user: string; pass: string } {
-  if (org.gmailUser && org.gmailPass) return { user: org.gmailUser, pass: org.gmailPass };
+function resolveSender(): { user: string; pass: string } {
   if (config.appEmail) return config.appEmail;
   throw new Error(
-    "No email sender configured. Set APP_GMAIL_USER/APP_GMAIL_PASS or provide an org Gmail App Password.",
+    "No email sender configured. Set APP_GMAIL_USER/APP_GMAIL_PASS.",
   );
 }
 
 export async function sendEmail(
   { org, to, subject, html, text, attachments, replyTo }: SendArgs,
 ): Promise<SendResult> {
-  const { user, pass } = resolveSender(org);
+  const { user, pass } = resolveSender();
   const t = transporterFor(user, pass);
   const info = await t.sendMail({
     from: `"${org.name}" <${user}>`,
