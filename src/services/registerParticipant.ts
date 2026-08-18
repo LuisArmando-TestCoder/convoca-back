@@ -38,13 +38,14 @@ async function emailQr(
   p: Participant,
   isSelf: boolean,
 ): Promise<void> {
-  const qrPng = qrPngBuffer(p.hash);
+  const showQr = event.showQr !== false;
   const cid = "qr@convoca";
 
   const eventDate = event.date ? new Date(event.date).toLocaleString() : "";
+  const links = event.links ?? [];
   const tpl = isSelf
-    ? selfRegConfirmEmail(org.name, p.name, event.name, event.description, cid)
-    : qrInviteEmail(org.name, p.name, event.name, eventDate, event.description, cid);
+    ? selfRegConfirmEmail(org.name, p.name, event.name, event.description, cid, links, showQr)
+    : qrInviteEmail(org.name, p.name, event.name, eventDate, event.description, cid, links, showQr);
 
   await sendEmail({
     org,
@@ -55,12 +56,12 @@ async function emailQr(
     html: tpl.html,
     // The plain-text alternative is what keeps this out of "quishing" spam drops.
     text: tpl.text,
-    attachments: [{
+    attachments: showQr ? [{
       filename: "checkin-qr.png",
-      content: qrPng,
+      content: qrPngBuffer(p.hash),
       contentType: "image/png",
       cid,
-    }],
+    }] : [],
   });
 }
 

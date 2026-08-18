@@ -27,7 +27,7 @@ import { sendEmail } from "../lib/email.ts";
 import { failureReportEmail, type FailureRow } from "../lib/emailTemplates.ts";
 import { listCollaborators } from "../db/orgs.ts";
 import { broadcast, roomKey } from "../socket/hub.ts";
-import type { EventDoc, EventField, EventMode, Participant, SelfRegLink } from "../types.ts";
+import type { EventDoc, EventField, EventLink, EventMode, Participant, SelfRegLink } from "../types.ts";
 
 const events = new Hono<AppEnv>();
 events.use("*", requireAuth);
@@ -47,6 +47,22 @@ function parseQuota(v: unknown): number | null {
 const slugify = (s: string) =>
   s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) ||
   "field";
+
+/** Parse the links shown on the QR email. Only entries with a URL are kept. */
+function parseEventLinks(raw: unknown): EventLink[] {
+  if (!Array.isArray(raw)) return [];
+  const out: EventLink[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    const url = typeof rec.url === "string" ? rec.url.trim().slice(0, 500) : "";
+    if (!url) continue;
+    const label = typeof rec.label === "string" ? rec.label.trim().slice(0, 120) : "";
+    out.push({ label, url });
+    if (out.length >= 20) break;
+  }
+  return out;
+}
 
 /** Parse the team-defined field schema off an event create/patch body. */
 function parseEventFields(raw: unknown): EventField[] {
@@ -119,6 +135,8 @@ events.post("/", async (c) => {
     date: optionalString(body.date, 40),
     quota: parseQuota(body.quota),
     fields: parseEventFields(body.fields),
+    links: parseEventLinks(body.links),
+    showQr: body.showQr !== false,
     clonedFrom: null,
     createdAt: new Date().toISOString(),
   };
@@ -141,6 +159,8 @@ events.patch("/:id", async (c) => {
     date: body.date != null ? optionalString(body.date, 40) : ev.date,
     quota: body.quota !== undefined ? parseQuota(body.quota) : ev.quota,
     fields: body.fields !== undefined ? parseEventFields(body.fields) : (ev.fields ?? []),
+    links: body.links !== undefined ? parseEventLinks(body.links) : (ev.links ?? []),
+    showQr: body.showQr !== undefined ? body.showQr !== false : (ev.showQr ?? true),
   };
   await updateEvent(updated);
 

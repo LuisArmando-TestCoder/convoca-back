@@ -72,6 +72,28 @@ function descriptionBlock(eventDescription: string): string {
     </div>`;
 }
 
+/** Links shown on the QR email. Only entries with a URL render. */
+function linksBlock(links: { label: string; url: string }[]): string {
+  const filled = (links ?? []).filter((l) => l.url);
+  if (filled.length === 0) return "";
+  const rows = filled.map((l) => {
+    const label = l.label || l.url;
+    return `
+      <tr>
+        <td style="padding:6px 0;">
+          <a href="${esc(l.url)}" style="color:${BRAND};font-size:14px;font-weight:600;text-decoration:none;">${
+            esc(label)
+          }</a>
+        </td>
+      </tr>`;
+  }).join("");
+  return `
+    <div style="margin:0 0 16px;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;">
+      <p style="margin:0 0 4px;font-size:12px;color:${MUTED};text-transform:uppercase;letter-spacing:.04em;">Useful links</p>
+      <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">${rows}</table>
+    </div>`;
+}
+
 export function qrInviteEmail(
   orgName: string,
   participantName: string,
@@ -79,14 +101,11 @@ export function qrInviteEmail(
   eventDate: string,
   eventDescription: string,
   qrCid: string,
+  links: { label: string; url: string }[] = [],
+  showQr = true,
 ): { subject: string; html: string; text: string } {
-  const body = `
-    <p style="margin:0 0 16px;font-size:15px;color:${MUTED};line-height:1.5;">
-      Hi ${esc(participantName)}, you're registered for <strong style="color:${INK};">${
-    esc(eventName)
-  }</strong>${eventDate ? ` on <strong style="color:${INK};">${esc(eventDate)}</strong>` : ""}.
-    </p>
-    ${descriptionBlock(eventDescription)}
+  const qrBlock = showQr
+    ? `
     <p style="margin:0 0 16px;font-size:15px;color:${MUTED};line-height:1.5;">
       Show this QR code at check-in:
     </p>
@@ -94,18 +113,38 @@ export function qrInviteEmail(
     <div style="text-align:center;margin:8px 0 20px;">
       <img src="cid:${qrCid}" alt="Your check-in QR code" width="220" height="220" style="border-radius:12px;border:1px solid #e2e8f0;" />
     </div>
-    <p style="margin:0;font-size:13px;color:${MUTED};">Keep this email handy — it's your ticket in.</p>`;
+    <p style="margin:0;font-size:13px;color:${MUTED};">Keep this email handy — it's your ticket in.</p>`
+    : "";
+  const body = `
+    <p style="margin:0 0 16px;font-size:15px;color:${MUTED};line-height:1.5;">
+      Hi ${esc(participantName)}, you're registered for <strong style="color:${INK};">${
+    esc(eventName)
+  }</strong>${eventDate ? ` on <strong style="color:${INK};">${esc(eventDate)}</strong>` : ""}.
+    </p>
+    ${descriptionBlock(eventDescription)}
+    ${linksBlock(links)}
+    ${qrBlock}`;
   const text = `Hi ${participantName},\n\n` +
     `You're registered for ${eventName}${eventDate ? ` on ${eventDate}` : ""}.\n` +
     (eventDescription ? `\n${eventDescription}\n` : "") +
-    `\nYour personal check-in QR code is shown in this email and attached as ` +
-    `checkin-qr.png. Show it at the door to check in — keep this email handy, ` +
-    `it's your ticket in.\n\nSent via Convoca · event check-in`;
+    (filledLinks(links).length
+      ? `\nUseful links:\n${filledLinks(links).map((l) => `- ${l.label || l.url}: ${l.url}`).join("\n")}\n`
+      : "") +
+    (showQr
+      ? `\nYour personal check-in QR code is shown in this email and attached as ` +
+        `checkin-qr.png. Show it at the door to check in — keep this email handy, ` +
+        `it's your ticket in.\n\n`
+      : `\nYou're all set. See you at the event!\n\n`) +
+    `Sent via Convoca · event check-in`;
   return {
     subject: `Your check-in QR for ${eventName}`,
     html: layout(orgName, "You're in! 🎟️", body),
     text,
   };
+}
+
+function filledLinks(links: { label: string; url: string }[]): { label: string; url: string }[] {
+  return (links ?? []).filter((l) => l.url);
 }
 
 export function certificateEmail(
@@ -140,23 +179,35 @@ export function selfRegConfirmEmail(
   eventName: string,
   eventDescription: string,
   qrCid: string,
+  links: { label: string; url: string }[] = [],
+  showQr = true,
 ): { subject: string; html: string; text: string } {
+  const qrBlock = showQr
+    ? `
+    <div style="text-align:center;margin:8px 0 20px;">
+
+      <img src="cid:${qrCid}" alt="Your check-in QR code" width="220" height="220" style="border-radius:12px;border:1px solid #e2e8f0;" />
+    </div>
+    <p style="margin:0;font-size:13px;color:${MUTED};">Show this QR at the door to check in.</p>`
+    : "";
   const body = `
     <p style="margin:0 0 16px;font-size:15px;color:${MUTED};line-height:1.5;">
       Thanks for registering, ${esc(participantName)}! Your spot for
       <strong style="color:${INK};">${esc(eventName)}</strong> is confirmed.
     </p>
     ${descriptionBlock(eventDescription)}
-    <div style="text-align:center;margin:8px 0 20px;">
-
-      <img src="cid:${qrCid}" alt="Your check-in QR code" width="220" height="220" style="border-radius:12px;border:1px solid #e2e8f0;" />
-    </div>
-    <p style="margin:0;font-size:13px;color:${MUTED};">Show this QR at the door to check in.</p>`;
+    ${linksBlock(links)}
+    ${qrBlock}`;
   const text = `Thanks for registering, ${participantName}!\n\n` +
     `Your spot for ${eventName} is confirmed.\n` +
     (eventDescription ? `\n${eventDescription}\n` : "") +
-    `\nYour personal check-in QR code is shown in this email and attached as ` +
-    `checkin-qr.png. Show it at the door to check in.\n\n` +
+    (filledLinks(links).length
+      ? `\nUseful links:\n${filledLinks(links).map((l) => `- ${l.label || l.url}: ${l.url}`).join("\n")}\n`
+      : "") +
+    (showQr
+      ? `\nYour personal check-in QR code is shown in this email and attached as ` +
+        `checkin-qr.png. Show it at the door to check in.\n\n`
+      : `\nYou're all set. See you at the event!\n\n`) +
     `Sent via Convoca · event check-in`;
   return {
     subject: `You're registered for ${eventName}`,
