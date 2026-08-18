@@ -61,6 +61,9 @@ export interface EventDoc {
   createdAt: string;
 }
 
+/** Review state for application-origin participants. */
+export type ApplicationStatus = "pending" | "accepted" | "rejected";
+
 /**
  * An invited participant. Its id/`hash` is the SHA-256 of name + email — the
  * exact value encoded in the QR image. All other attributes are metadata.
@@ -82,6 +85,12 @@ export interface Participant {
   registeredAt: string | null;
   source: ParticipantSource;
   createdAt: string;
+  /** True when this participant came in via an application-type link (awaiting review). */
+  application?: boolean;
+  /** Review state for application-origin participants. */
+  applicationStatus?: ApplicationStatus;
+  /** When true, the participant is moved to the hidden tab (declutters the list). */
+  hidden?: boolean;
 }
 
 
@@ -95,6 +104,8 @@ export interface SelfRegLink {
   /** Per-link registration fields; overrides the event's schema for this link. */
   fields: EventField[];
   active: boolean;
+  /** When true, this link is an application source: registrants are held for review. */
+  application: boolean;
   createdBy: string;
   createdAt: string;
   expiresAt: string | null;

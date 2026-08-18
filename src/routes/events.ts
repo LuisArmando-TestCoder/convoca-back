@@ -22,7 +22,7 @@ import {
   updateParticipant,
 } from "../db/participants.ts";
 import { createLink, deleteLink, getLink, listLinks, updateLink } from "../db/links.ts";
-import { registerParticipant, resendQr } from "../services/registerParticipant.ts";
+import { acceptApplication, registerParticipant, resendQr } from "../services/registerParticipant.ts";
 import { sendEmail } from "../lib/email.ts";
 import { failureReportEmail, type FailureRow } from "../lib/emailTemplates.ts";
 import { listCollaborators } from "../db/orgs.ts";
@@ -421,6 +421,48 @@ events.post("/:id/participants/:hash/resend", async (c) => {
   return c.json({ ok: true });
 });
 
+// ── Application review ─────────────────────────────────────────────────────────
+// Participants who entered via an application-type link are held for review.
+// Accepting emails the QR (the participant becomes a normal attendee); rejecting
+// marks them rejected; hiding moves them to the hidden tab to declutter the list.
+
+events.post("/:id/participants/:hash/accept", async (c) => {
+  const ev = await loadEvent(c);
+  const p = await getParticipant(ev.orgId, ev.id, c.req.param("hash"));
+  if (!p) fail(404, "Participant not found.");
+  if (!p!.application) fail(400, "This participant did not apply through an application link.");
+  const updated = await acceptApplication(c.get("org"), ev, p!);
+  return c.json({ participant: updated });
+});
+
+events.post("/:id/participants/:hash/reject", async (c) => {
+  const ev = await loadEvent(c);
+  const p = await getParticipant(ev.orgId, ev.id, c.req.param("hash"));
+  if (!p) fail(404, "Participant not found.");
+  if (!p!.application) fail(400, "This participant did not apply through an application link.");
+  const updated: Participant = { ...p!, applicationStatus: "rejected" };
+  await updateParticipant(updated);
+  return c.json({ participant: updated });
+});
+
+events.post("/:id/participants/:hash/hide", async (c) => {
+  const ev = await loadEvent(c);
+  const p = await getParticipant(ev.orgId, ev.id, c.req.param("hash"));
+  if (!p) fail(404, "Participant not found.");
+  const updated: Participant = { ...p!, hidden: true };
+  await updateParticipant(updated);
+  return c.json({ participant: updated });
+});
+
+events.post("/:id/participants/:hash/unhide", async (c) => {
+  const ev = await loadEvent(c);
+  const p = await getParticipant(ev.orgId, ev.id, c.req.param("hash"));
+  if (!p) fail(404, "Participant not found.");
+  const updated: Participant = { ...p!, hidden: false };
+  await updateParticipant(updated);
+  return c.json({ participant: updated });
+});
+
 // Edit a participant. Identity = name + email, so only those affect the QR/doc
 // id. Editing custom fields is a metadata update (QR unchanged). When name or
 // email changes we write the new doc and remove the old one, carrying state.
@@ -505,6 +547,7 @@ events.post("/:id/links", async (c) => {
     name: body.name != null ? requireString(body.name, "name", 120) : "",
     fields: body.fields !== undefined ? parseEventFields(body.fields) : (ev.fields ?? []),
     active: true,
+    application: Boolean(body.application),
     createdBy: c.get("session").email,
     createdAt: new Date().toISOString(),
     expiresAt: null,
@@ -524,6 +567,7 @@ events.patch("/:id/links/:linkId", async (c) => {
     active: body.active !== undefined ? Boolean(body.active) : link!.active,
     name: body.name !== undefined ? requireString(body.name, "name", 120) : link!.name,
     fields: body.fields !== undefined ? parseEventFields(body.fields) : (link!.fields ?? []),
+    application: body.application !== undefined ? Boolean(body.application) : link!.application,
   };
   await updateLink(updated);
   return c.json({ link: { ...updated, url: linkUrl(updated.id) } });

@@ -16,8 +16,9 @@ export interface RegisterInput extends IdentityFields {
   fields?: Record<string, string>;
   source: ParticipantSource;
   createdBy: string;
+  /** True when this registration came through an application-type link (held for review). */
+  application?: boolean;
 }
-
 
 export interface RegisterOptions {
   /** Email the QR immediately. CSV imports pass false → participant stays pending. */
@@ -60,9 +61,7 @@ async function emailQr(
       contentType: "image/png",
       cid,
     }],
-
   });
-
 }
 
 export async function registerParticipant(
@@ -88,13 +87,18 @@ export async function registerParticipant(
     registeredAt: null,
     source: input.source,
     createdAt: now,
+    application: input.application ?? false,
+    applicationStatus: input.application ? "pending" : undefined,
   };
-
 
   const { created, participant } = await upsertParticipant(candidate);
 
   // Idempotent re-adds don't re-spam; deferred invites stay pending until sent.
-  if (!created || !sendInvite) return { created, emailed: false, participant };
+  // Application-origin registrants are held for review — no QR is emailed until
+  // an admin accepts them from the participants table.
+  if (!created || !sendInvite || input.application) {
+    return { created, emailed: false, participant };
+  }
 
   let emailed = false;
   try {
@@ -111,6 +115,23 @@ export async function registerParticipant(
     emailed,
     participant: { ...participant, qrSentAt: emailed ? now : null },
   };
+}
+
+/** Accept an application-origin participant: marks them accepted and emails the QR. */
+export async function acceptApplication(
+  org: Organization,
+  event: EventDoc,
+  p: Participant,
+): Promise<Participant> {
+  const accepted: Participant = {
+    ...p,
+    applicationStatus: "accepted",
+    hidden: false,
+  };
+  await emailQr(org, event, accepted, false);
+  const withQr: Participant = { ...accepted, qrSentAt: new Date().toISOString() };
+  await updateParticipant(withQr);
+  return withQr;
 }
 
 /** Resend (or first-send) the QR email for an existing participant. */

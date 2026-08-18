@@ -49,6 +49,7 @@ publicRouter.get("/register/:linkId", async (c) => {
   return c.json({
     orgName: org.name,
     linkName: link.name,
+    application: link.application,
     event: {
       name: event.name,
       description: event.description,
@@ -60,7 +61,9 @@ publicRouter.get("/register/:linkId", async (c) => {
   });
 });
 
-// POST /register/:linkId — a person registers themselves and gets a QR by email.
+// POST /register/:linkId — a person registers themselves. For application-type
+// links the registration is held for review (no QR is emailed); otherwise they
+// get a QR by email immediately.
 publicRouter.post("/register/:linkId", async (c) => {
   const { org, event, link } = await resolveLink(c.req.param("linkId"));
   const body = await c.req.json().catch(() => ({}));
@@ -77,6 +80,7 @@ publicRouter.post("/register/:linkId", async (c) => {
     fields: pickFields(fields, body.fields),
     source: "self",
     createdBy: "self-registration",
+    application: link.application,
   });
 
   return c.json({
