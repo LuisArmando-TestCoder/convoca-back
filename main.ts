@@ -11,6 +11,7 @@ import { HTTPException } from "hono/http-exception";
 import { config } from "./src/config.ts";
 import type { AppEnv } from "./src/context.ts";
 import { requireAuth } from "./src/middleware/auth.ts";
+import { rateLimit } from "./src/middleware/rateLimit.ts";
 import authRouter from "./src/routes/auth.ts";
 import eventsRouter from "./src/routes/events.ts";
 import collaboratorsRouter from "./src/routes/collaborators.ts";
@@ -43,6 +44,16 @@ app.use("*", async (c, next) => {
     c.header(k, v);
   }
 });
+
+// Per-IP rate limiting with exponential backoff — mounted after CORS so
+// preflight OPTIONS never counts against a client. Applies to every API route
+// (and the health check) centrally, before any handler hits Firestore.
+app.use("*", rateLimit({
+  limit: config.rateLimitMax,
+  windowMs: config.rateLimitWindowMs,
+  basePenaltyMs: config.rateLimitBasePenaltyMs,
+  maxPenaltyMs: config.rateLimitMaxPenaltyMs,
+}));
 
 
 

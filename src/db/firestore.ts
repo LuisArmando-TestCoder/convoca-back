@@ -4,8 +4,16 @@
 // decodes Firestore typed values, and exposes the handful of operations the
 // repositories need — including the two atomic ones (create-if-absent for
 // uniqueness, compare-and-set for the race-safe check-in).
+//
+// Quota resilience: every read is served through a layered in-memory cache
+// (fresh TTL + stale-while-revalidate + single-flight) and every request is
+// retried with exponential backoff on 429/5xx. Writes are serialized per key
+// and invalidate the affected cache entries, so a burst of reads for the same
+// document collapses to one Firestore call instead of stampeding the quota.
 
 import { config } from "../config.ts";
+import { withBackoff } from "../lib/backoff.ts";
+import { LayeredCache } from "../lib/cache.ts";
 
 interface ServiceAccount {
   project_id: string;
@@ -142,6 +150,38 @@ async function authedFetch(url: string, init: RequestInit = {}): Promise<Respons
   return fetch(url, { ...init, headers });
 }
 
+/** An HTTP error carrying its status so retry logic can inspect it. */
+class FsHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "FsHttpError";
+  }
+}
+
+/** Retry only quota exhaustion (429) and transient server errors (5xx). */
+function isRetryable(err: unknown): boolean {
+  if (err instanceof FsHttpError) return err.status === 429 || err.status >= 500;
+  return false;
+}
+
+// ── Layered cache ─────────────────────────────────────────────────────────────
+
+const cache = new LayeredCache({
+  freshMs: config.cacheFreshMs,
+  staleMs: config.cacheStaleMs,
+  maxEntries: config.cacheMaxEntries,
+});
+
+const docKey = (path: string) => `doc:${path}`;
+const listKey = (collectionPath: string) => `list:${collectionPath}`;
+
+/** Drops a document's cache entry and its parent collection's list entry. */
+function invalidateDoc(path: string): void {
+  cache.invalidate(docKey(path));
+  const parent = path.split("/").slice(0, -1).join("/");
+  if (parent) cache.invalidate(listKey(parent));
+}
+
 interface DocMeta<T> {
   data: T;
   updateTime: string;
@@ -164,24 +204,38 @@ async function drain(res: Response): Promise<void> {
 
 /** Get a document with its updateTime (needed for compare-and-set). */
 export async function fsGetWithMeta<T>(path: string): Promise<DocMeta<T> | null> {
-  const res = await authedFetch(`${await baseUrl()}/${path}`);
-  if (res.status === 404) {
-    await drain(res);
-    return null;
-  }
-  if (!res.ok) throw new Error(`fsGet ${path} failed: ${res.status} ${await res.text()}`);
-  const doc = await res.json();
-  return { data: fromFields(doc.fields ?? {}) as T, updateTime: doc.updateTime };
+  return cache.get(docKey(path), () =>
+    withBackoff(async () => {
+      const res = await authedFetch(`${await baseUrl()}/${path}`);
+      if (res.status === 404) {
+        await drain(res);
+        return null;
+      }
+      if (!res.ok) {
+        throw new FsHttpError(
+          `fsGet ${path} failed: ${res.status} ${await res.text()}`,
+          res.status,
+        );
+      }
+      const doc = await res.json();
+      return { data: fromFields(doc.fields ?? {}) as T, updateTime: doc.updateTime };
+    }, { shouldRetry: isRetryable }));
 }
 
 /** Create or overwrite a document (no field mask → full replace). */
 export async function fsSet(path: string, obj: Record<string, unknown>): Promise<void> {
-  const res = await authedFetch(`${await baseUrl()}/${path}`, {
-    method: "PATCH",
-    body: JSON.stringify({ fields: toFields(obj) }),
-  });
-  if (!res.ok) throw new Error(`fsSet ${path} failed: ${res.status} ${await res.text()}`);
-  await drain(res);
+  await cache.enqueueWrite(docKey(path), () =>
+    withBackoff(async () => {
+      const res = await authedFetch(`${await baseUrl()}/${path}`, {
+        method: "PATCH",
+        body: JSON.stringify({ fields: toFields(obj) }),
+      });
+      if (!res.ok) {
+        throw new FsHttpError(`fsSet ${path} failed: ${res.status} ${await res.text()}`, res.status);
+      }
+      await drain(res);
+    }, { shouldRetry: isRetryable }));
+  invalidateDoc(path);
 }
 
 /** Create a document only if it doesn't already exist. Returns false on conflict. */
@@ -190,22 +244,29 @@ export async function fsCreate(
   docId: string,
   obj: Record<string, unknown>,
 ): Promise<boolean> {
-  const url = `${await baseUrl()}/${collectionPath}?documentId=${encodeURIComponent(docId)}`;
-  const res = await authedFetch(url, {
-    method: "POST",
-    body: JSON.stringify({ fields: toFields(obj) }),
-  });
-  if (res.status === 409) {
-    await drain(res);
-    return false;
-  }
-  if (!res.ok) {
-    throw new Error(
-      `fsCreate ${collectionPath}/${docId} failed: ${res.status} ${await res.text()}`,
-    );
-  }
-  await drain(res);
-  return true;
+  const path = `${collectionPath}/${docId}`;
+  const result = await cache.enqueueWrite(docKey(path), () =>
+    withBackoff(async () => {
+      const url = `${await baseUrl()}/${collectionPath}?documentId=${encodeURIComponent(docId)}`;
+      const res = await authedFetch(url, {
+        method: "POST",
+        body: JSON.stringify({ fields: toFields(obj) }),
+      });
+      if (res.status === 409) {
+        await drain(res);
+        return false;
+      }
+      if (!res.ok) {
+        throw new FsHttpError(
+          `fsCreate ${collectionPath}/${docId} failed: ${res.status} ${await res.text()}`,
+          res.status,
+        );
+      }
+      await drain(res);
+      return true;
+    }, { shouldRetry: isRetryable }));
+  invalidateDoc(path);
+  return result;
 }
 
 /**
@@ -217,51 +278,74 @@ export async function fsCasUpdate(
   obj: Record<string, unknown>,
   updateTime: string,
 ): Promise<boolean> {
-  const url = `${await baseUrl()}/${path}?currentDocument.updateTime=${
-    encodeURIComponent(updateTime)
-  }`;
-  const res = await authedFetch(url, {
-    method: "PATCH",
-    body: JSON.stringify({ fields: toFields(obj) }),
-  });
-  if (res.status === 400 || res.status === 409) {
-    await drain(res); // FAILED_PRECONDITION → lost race
-    return false;
-  }
-  if (!res.ok) throw new Error(`fsCasUpdate ${path} failed: ${res.status} ${await res.text()}`);
-  await drain(res);
-  return true;
+  const result = await cache.enqueueWrite(docKey(path), () =>
+    withBackoff(async () => {
+      const url = `${await baseUrl()}/${path}?currentDocument.updateTime=${
+        encodeURIComponent(updateTime)
+      }`;
+      const res = await authedFetch(url, {
+        method: "PATCH",
+        body: JSON.stringify({ fields: toFields(obj) }),
+      });
+      if (res.status === 400 || res.status === 409) {
+        await drain(res); // FAILED_PRECONDITION → lost race
+        return false;
+      }
+      if (!res.ok) {
+        throw new FsHttpError(
+          `fsCasUpdate ${path} failed: ${res.status} ${await res.text()}`,
+          res.status,
+        );
+      }
+      await drain(res);
+      return true;
+    }, { shouldRetry: isRetryable }));
+  invalidateDoc(path);
+  return result;
 }
 
 export async function fsDelete(path: string): Promise<void> {
-  const res = await authedFetch(`${await baseUrl()}/${path}`, { method: "DELETE" });
-  if (!res.ok && res.status !== 404) {
-    throw new Error(`fsDelete ${path} failed: ${res.status} ${await res.text()}`);
-  }
-  await drain(res);
+  await cache.enqueueWrite(docKey(path), () =>
+    withBackoff(async () => {
+      const res = await authedFetch(`${await baseUrl()}/${path}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 404) {
+        throw new FsHttpError(
+          `fsDelete ${path} failed: ${res.status} ${await res.text()}`,
+          res.status,
+        );
+      }
+      await drain(res);
+    }, { shouldRetry: isRetryable }));
+  invalidateDoc(path);
 }
 
 /** List all documents in a collection (paginated). Returns each doc's data + id. */
 export async function fsList<T>(collectionPath: string): Promise<Array<T & { _id: string }>> {
-  const out: Array<T & { _id: string }> = [];
-  let pageToken = "";
-  do {
-    const url = new URL(`${await baseUrl()}/${collectionPath}`);
-    url.searchParams.set("pageSize", "300");
-    if (pageToken) url.searchParams.set("pageToken", pageToken);
-    const res = await authedFetch(url.toString());
-    if (res.status === 404) break;
-    if (!res.ok) {
-      throw new Error(`fsList ${collectionPath} failed: ${res.status} ${await res.text()}`);
-    }
-    const data = await res.json();
-    for (const doc of data.documents ?? []) {
-      const id = String(doc.name).split("/").pop()!;
-      out.push({ ...(fromFields(doc.fields ?? {}) as T), _id: id });
-    }
-    pageToken = data.nextPageToken ?? "";
-  } while (pageToken);
-  return out;
+  return cache.get(listKey(collectionPath), () =>
+    withBackoff(async () => {
+      const out: Array<T & { _id: string }> = [];
+      let pageToken = "";
+      do {
+        const url = new URL(`${await baseUrl()}/${collectionPath}`);
+        url.searchParams.set("pageSize", "300");
+        if (pageToken) url.searchParams.set("pageToken", pageToken);
+        const res = await authedFetch(url.toString());
+        if (res.status === 404) break;
+        if (!res.ok) {
+          throw new FsHttpError(
+            `fsList ${collectionPath} failed: ${res.status} ${await res.text()}`,
+            res.status,
+          );
+        }
+        const data = await res.json();
+        for (const doc of data.documents ?? []) {
+          const id = String(doc.name).split("/").pop()!;
+          out.push({ ...(fromFields(doc.fields ?? {}) as T), _id: id });
+        }
+        pageToken = data.nextPageToken ?? "";
+      } while (pageToken);
+      return out;
+    }, { shouldRetry: isRetryable }));
 }
 
 /** Just the document ids in a collection (used for lightweight index lookups). */

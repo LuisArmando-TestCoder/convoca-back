@@ -41,5 +41,18 @@ export const config = {
   // Pause between each QR email in a bulk send, so a burst doesn't trip Gmail's
   // per-second/per-minute limits (which silently drop the overflow).
   sendDelayMs: int("SEND_DELAY_MS", 700),
+
+  // ── Firestore quota resilience ──────────────────────────────────────────────
+  // Layered read cache: a value is fresh for cacheFreshMs, then served stale
+  // (while one background refresh repopulates it) for up to cacheStaleMs more.
+  cacheFreshMs: int("CACHE_FRESH_MS", 30_000),
+  cacheStaleMs: int("CACHE_STALE_MS", 300_000),
+  cacheMaxEntries: int("CACHE_MAX_ENTRIES", 10_000),
+
+  // Per-IP rate limiting (fixed window + exponential backoff penalty).
+  rateLimitMax: int("RATE_LIMIT_MAX", 120),
+  rateLimitWindowMs: int("RATE_LIMIT_WINDOW_MS", 60_000),
+  rateLimitBasePenaltyMs: int("RATE_LIMIT_BASE_PENALTY_MS", 30_000),
+  rateLimitMaxPenaltyMs: int("RATE_LIMIT_MAX_PENALTY_MS", 900_000),
 } as const;
 
